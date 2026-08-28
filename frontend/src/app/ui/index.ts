@@ -28,3 +28,6 @@ export type { SkeletonShape } from './skeleton';
 
 export { EmptyState } from './empty-state';
 export { ErrorState } from './error-state';
+
+export { ToolCallCard } from './tool-call-card';
+export type { ToolCallState } from './tool-call-card';

@@ -21,5 +21,9 @@
   },
   "devDependencies": {
     "concurrently": "^10.0.5"
+  },
+  "optionalDependencies": {
+    "lightningcss-darwin-arm64": "1.32.0",
+    "lightningcss-linux-x64-gnu": "1.32.0"
   }
 }
