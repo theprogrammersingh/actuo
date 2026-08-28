@@ -1,0 +1,42 @@
+# Actuo
+
+> An expense management platform where every meaningful action is also a WebMCP
+> tool, so an AI agent can operate the app on a user's behalf transparently and
+> within the same permission boundaries as a human.
+
+Actuo is BYOK: it never holds or proxies an LLM key. Each user supplies their own
+Google Gemini API key, it is stored only in their browser, and every model call
+goes directly from the browser to Google.
+
+## Tools exposed via WebMCP
+
+Registered on `document.modelContext` once a user is signed in:
+
+- `search_expenses` — search the organization's expenses by text, status or date
+  range. Read-only.
+- `submit_expense` — create an expense and submit it for approval. Mutating;
+  requires explicit user confirmation before it runs.
+- `get_budget_status` — per-category budget, spend, remaining and utilization.
+  Read-only.
+- `generate_report` — generate a CSV expense report for a date range.
+  Long-running and cancellable via AbortSignal.
+- `approve_expense` — approve or reject a submitted expense. Registered only
+  while the signed-in user is an admin or owner AND items are pending, so it
+  appears and disappears with `toolchange`. Mutating; requires confirmation.
+
+The Add Expense page additionally exposes a *declarative* tool: the form is
+annotated plain HTML (`toolname`, `tooldescription`, `toolparamdescription`,
+`toolautosubmit`) with no JavaScript tool registration at all.
+
+## Permissions
+
+An agent can do exactly what the signed-in user can do, and nothing more. Roles
+(`owner`, `admin`, `member`) are enforced server-side on every request, so a tool
+call is authorized the same way a click is. Every invocation, by a human or an
+agent, is written to an audit log.
+
+## Notes for agents
+
+- WebMCP is behind a flag in current Chrome: `chrome://flags/#enable-webmcp-testing`.
+- Amounts may be filed in several currencies; `convertedAmount` is the value in
+  the organization's base currency and is what totals should use.

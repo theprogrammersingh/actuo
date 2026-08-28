@@ -1,0 +1,14 @@
+# Actuo — only the public surface is indexable (PRD §8.5).
+User-agent: *
+Allow: /$
+Allow: /partner-demo/
+Disallow: /dashboard
+Disallow: /expenses
+Disallow: /add
+Disallow: /budgets
+Disallow: /settings
+Disallow: /login
+Disallow: /signup
+Disallow: /api/
+
+Sitemap: /sitemap.xml
