@@ -32,14 +32,25 @@ npm test               # backend + frontend unit tests
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
 
 ```bash
-# one backend test file / one test by name
+# backend: one file, or one test by name
 npx vitest run --root backend backend/src/app.controller.spec.ts
 npx vitest run --root backend -t "routing contract"
 # backend e2e uses a separate config
 npx vitest run --config backend/vitest.config.e2e.ts --root backend
-# one frontend test
-npx vitest run --root frontend -t "AppComponent"
+
+# frontend: MUST go through ng test, which is the @angular/build:unit-test builder
+npm test --workspace frontend -- --no-watch
+npm test --workspace frontend -- --no-watch --test-name-pattern "ToolRegistry"
 ```
+
+**Do not run the frontend suite with bare `npx vitest`.** Angular's builder generates the
+TestBed bootstrap (`init-testbed.js`) as part of the test build; without it every spec that
+touches `TestBed` dies with `Cannot read properties of null (reading 'ngModule')`. Specs with
+no Angular dependency happen to pass, which makes the breakage look selective and confusing.
+
+`webmcp-types` must be listed in the `types` array of **both** `frontend/tsconfig.app.json`
+and `frontend/tsconfig.spec.json`, or the `WebMCP` namespace resolves in the app build and
+fails in the test build.
 
 `shared/` must be built before either consumer — a missing `shared/dist` shows up as
 `TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `npm run dev`
