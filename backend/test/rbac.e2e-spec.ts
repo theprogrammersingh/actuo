@@ -427,11 +427,25 @@ describe('RBAC is enforced server-side (PRD §9 / CLAUDE.md rule 5)', () => {
     it('serves GET /api/config without a token', async () => {
       const res = await request(app.getHttpServer()).get(url('/config'));
       expect(res.status).toBe(200);
-      expect(res.body.geminiModels.map((m: { id: string }) => m.id)).toEqual([
-        'gemini-3-pro',
-        'gemini-3-flash',
-        'gemini-2.5-flash',
-      ]);
+      /*
+       * Deliberately not pinned to an exact list. The whole reason this
+       * endpoint exists is that Gemini's line-up churns (PRD §11), so a test
+       * asserting the exact ids fails every time the list is legitimately
+       * edited — which teaches people to update the test without reading it.
+       * Assert the contract instead: usable ids, no duplicates, and a default
+       * that is actually offered.
+       */
+      const ids: string[] = res.body.geminiModels.map((m: { id: string }) => m.id);
+      expect(ids.length).toBeGreaterThan(0);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids).toContain(res.body.defaultGeminiModel);
+
+      // The default must be able to call tools, or the Copilot cannot act.
+      const fallback = res.body.geminiModels.find(
+        (m: { id: string }) => m.id === res.body.defaultGeminiModel,
+      );
+      expect(fallback.supportsTools).not.toBe(false);
+
       expect(res.body.baseCurrency).toBe('INR');
 
       // The LLM boundary, asserted rather than assumed: no key of any kind may

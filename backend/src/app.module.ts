@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
@@ -15,6 +16,21 @@ import { BudgetsModule } from './budgets/budgets.module.js';
 import { ToolCallsModule } from './tool-calls/tool-calls.module.js';
 import { OrgsModule } from './orgs/orgs.module.js';
 import { ReportsModule } from './reports/reports.module.js';
+
+/**
+ * Absolute path to `backend/.env`.
+ *
+ * `envFilePath: '.env'` resolves against `process.cwd()`, which silently ties
+ * the service to being started from `backend/`. In the combined production
+ * deploy the entry point is `node server.mjs` at the repo root, so the same
+ * binary would find no env file and every database route would answer 503 —
+ * a failure that looks like bad credentials rather than a wrong directory.
+ *
+ * Resolving from this module's own location instead works from any cwd. It
+ * lands on `backend/.env` from both `dist/app.module.js` and
+ * `src/app.module.ts`, since both sit one level below the package root.
+ */
+const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
 
 /**
  * GUARD ORDER IS SIGNIFICANT.
@@ -36,7 +52,7 @@ import { ReportsModule } from './reports/reports.module.js';
  */
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ENV_FILE }),
     // Global: binds the repository tokens every feature module injects.
     SupabaseModule,
     AuthModule,

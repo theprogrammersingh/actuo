@@ -53,8 +53,45 @@ export class SupabaseService {
         persistSession: false,
         autoRefreshToken: false,
       },
+      global: { fetch: timeoutFetch },
     });
     this.logger.log('Supabase client initialised (service role).');
     return this.client;
+  }
+}
+
+/**
+ * How long an outbound Supabase call may take before we give up.
+ *
+ * Generous: normal queries land in 200-600ms, so this only fires on a genuinely
+ * stuck connection.
+ */
+const SUPABASE_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS ?? 8000);
+
+/**
+ * `fetch` with a deadline.
+ *
+ * supabase-js has no request timeout of its own, so a connection that stalls
+ * leaves the HTTP request hanging until the *client* gives up. In the browser
+ * that is a spinner that never resolves — indistinguishable from "the API is
+ * broken", which is exactly how it gets reported.
+ *
+ * Failing fast turns that into an error the UI can show and retry. The abort is
+ * chained rather than replacing any caller signal, so cancellation still works
+ * (the report job depends on it).
+ */
+async function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const timeout = AbortSignal.timeout(SUPABASE_TIMEOUT_MS);
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+
+  try {
+    return await fetch(input, { ...init, signal });
+  } catch (error) {
+    if (timeout.aborted) {
+      throw new Error(
+        `Supabase did not respond within ${SUPABASE_TIMEOUT_MS}ms. The request was abandoned.`,
+      );
+    }
+    throw error;
   }
 }

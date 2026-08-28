@@ -191,7 +191,9 @@ describe('auth: signup, login, and refresh-token rotation (PRD §6.1)', () => {
     refreshTokens.rows.clear();
   });
 
-  const post = (path: string, body: unknown, ip = freshIp()) =>
+  // `send()` is typed as string | object, so `unknown` needs narrowing here
+  // rather than at every call site.
+  const post = (path: string, body: string | object | undefined, ip = freshIp()) =>
     request(app.getHttpServer()).post(url(path)).set('X-Forwarded-For', ip).send(body);
 
   const signup = () => post('/auth/signup', CREDENTIALS);
