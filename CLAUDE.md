@@ -4,8 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Phase A (scaffold) is complete and committed. Phase 0 feature work is in progress.
-The build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
+Scaffold, backend, design system, BYOK Gemini layer, WebMCP tool layer and the
+Copilot are all built and committed. Remaining: app shell + routing wiring,
+Firebase App Hosting deploy, and the README/demo script.
+
+Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 
 Source of truth docs live in `docs/`: `Actuo-PRD.md` (features, WebMCP coverage map,
 data model), `Actuo-Design-Doc.md` (Aurora Ledger visual identity), and
@@ -125,6 +128,44 @@ Two live compatibility traps for any `getTools()` consumer:
 **Cross-origin requires native Chrome.** `@mcp-b/webmcp-polyfill` rejects non-empty
 `fromOrigins`/`exposedTo` with `NotSupportedError`, so the polyfill is a same-origin
 fallback only.
+
+## Module map
+
+**backend/** — `auth/` (argon2id + JWT, rotating refresh, guards), `expenses/`
+(CRUD, search, the status state machine), `budgets/`, `reports/` (polled job for
+the cancellation demo), `tool-calls/` (audit log), `orgs/`, `config/`
+(`GET /api/config` serves the Gemini model list so it is editable without a
+rebuild), `supabase/` (client + repository seam), `common/` (rate limiting).
+Migrations live in `supabase/migrations/`. Seed users: `priya@actuo.demo`
+(owner), `arjun@actuo.demo` (member), password `Demo1234!`.
+
+Three global guards run in order — rate limit, JWT, roles — so a route without
+`@Public()` fails closed. `RolesGuard` reads the role from `memberships` per
+request; the access token deliberately carries no role claim.
+
+**frontend/src/app/**
+- `ui/` — design system (`Button`, `Card`, `Badge`, `Input`, `StatCard`,
+  `ProgressBar`, `Skeleton`, `EmptyState`, `ErrorState`, `ToolCallCard`), barrel
+  at `ui/index.ts`, plus an unrouted `ui/showcase/`.
+- `ai/` — BYOK Gemini layer. `KeyStore`, `GeminiClient`, `ModelCatalog`,
+  `testGeminiKey`, typed `GeminiError`. **`GeminiClient.generate()` takes RAW
+  `{name, description, inputSchema}` declarations and runs the OpenAPI
+  translation itself — never pre-convert with `toFunctionDeclarations()`, or the
+  schema lands under `parameters` where the second pass cannot see it and every
+  tool reaches the model with no arguments.**
+- `webmcp/` — `ToolRegistry` and `ToolSession` (state gating).
+- `tools/` — the five tool `execute()` implementations over `/api/*`.
+- `copilot/` — `Copilot` (the agent loop) and `CopilotPanel` (orb + panel).
+- `core/api/` — `ApiClient`. `core/theme/` — `ThemeService`.
+- `pages/add-expense/` — the declarative WebMCP form.
+
+## Gemini schema translation
+
+Gemini's function-calling dialect is an OpenAPI 3.0 subset, and our contracts
+use keywords it rejects (`additionalProperties`, `format`, `default`,
+`exclusiveMinimum`). `toGeminiSchema()` folds those into the description rather
+than dropping them — so the model still knows a date is `YYYY-MM-DD` and that
+`limit` defaults to 20. Dropping them silently makes the model measurably worse.
 
 ## Architectural rules that must not be violated
 
