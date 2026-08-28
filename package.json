@@ -3,27 +3,22 @@
   "version": "0.0.1",
   "private": true,
   "description": "AI-native expense intelligence platform with a universal WebMCP Copilot",
-  "workspaces": [
-    "shared",
-    "frontend",
-    "backend"
-  ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "pnpm": ">=10"
   },
   "scripts": {
-    "dev": "npm run build:shared && concurrently -n backend,frontend -c blue,magenta \"npm:dev:backend\" \"npm:dev:frontend\"",
-    "dev:backend": "npm run start:dev --workspace backend",
-    "dev:frontend": "npm start --workspace frontend",
-    "build:shared": "npm run build --workspace shared",
-    "build": "npm run build:shared && npm run build --workspace backend && npm run build --workspace frontend",
-    "test": "npm run test --workspace backend && npm run test --workspace frontend"
+    "dev": "pnpm run build:shared && concurrently -n backend,frontend -c blue,magenta \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
+    "dev:backend": "pnpm --filter backend run start:dev",
+    "dev:frontend": "pnpm --filter frontend run start",
+    "build:shared": "pnpm --filter @actuo/shared run build",
+    "build": "pnpm run build:shared && pnpm --filter backend run build && pnpm --filter frontend run build",
+    "test": "pnpm --filter backend run test && pnpm --filter frontend run test",
+    "test:e2e": "pnpm --filter backend run test:e2e"
   },
   "devDependencies": {
-    "concurrently": "^10.0.5"
+    "concurrently": "^10.0.5",
+    "supabase": "^2.116.0"
   },
-  "optionalDependencies": {
-    "lightningcss-darwin-arm64": "1.32.0",
-    "lightningcss-linux-x64-gnu": "1.32.0"
-  }
+  "packageManager": "pnpm@10.14.0"
 }

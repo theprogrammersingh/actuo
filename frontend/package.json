@@ -6,12 +6,13 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test",
-    "serve:ssr:frontend": "node dist/frontend/server/server.mjs"
+    "test": "ng test --no-watch",
+    "serve:ssr:frontend": "node dist/frontend/server/server.mjs",
+    "test:watch": "ng test"
   },
   "private": true,
-  "packageManager": "npm@11.6.0",
   "dependencies": {
+    "@actuo/shared": "workspace:*",
     "@angular/common": "^21.2.0",
     "@angular/compiler": "^21.2.0",
     "@angular/core": "^21.2.0",

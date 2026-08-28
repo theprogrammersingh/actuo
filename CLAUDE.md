@@ -12,7 +12,8 @@ Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 
 Source of truth docs live in `docs/`: `Actuo-PRD.md` (features, WebMCP coverage map,
 data model), `Actuo-Design-Doc.md` (Aurora Ledger visual identity), and
-`Actuo-Project-Initialisation.md` (setup — now partly superseded, see below).
+`Actuo-Project-Initialisation.md` (setup — partly superseded: it predates both
+Tailwind v4 and the move to pnpm, so follow the commands here rather than there).
 
 ## What Actuo is
 
@@ -26,25 +27,35 @@ Built for a hackathon deadline (Aug 31, 2026).
 
 ## Commands
 
+**This repo uses pnpm.** Do not run `npm install` — it would create a competing
+`package-lock.json` and a hoisted `node_modules` that hides missing dependency
+declarations (see "Why pnpm changes things" below).
+
 ```bash
-npm run dev            # builds shared, then backend (:3000) + frontend (:4200) together
-npm run build          # shared -> backend -> frontend, in that order
-npm test               # backend + frontend unit tests
+pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
+pnpm run dev           # builds shared, then backend (:3000) + frontend (:4200) together
+pnpm run build         # shared -> backend -> frontend, in that order
+pnpm test              # backend + frontend unit tests
+pnpm run test:e2e      # backend e2e
 ```
 
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
 
 ```bash
 # backend: one file, or one test by name
-npx vitest run --root backend backend/src/app.controller.spec.ts
-npx vitest run --root backend -t "routing contract"
-# backend e2e uses a separate config
-npx vitest run --config backend/vitest.config.e2e.ts --root backend
+pnpm --filter backend exec vitest run src/app.controller.spec.ts
+pnpm --filter backend exec vitest run -t "routing contract"
+pnpm --filter backend run test:e2e
 
 # frontend: MUST go through ng test, which is the @angular/build:unit-test builder
-npm test --workspace frontend -- --no-watch
-npm test --workspace frontend -- --no-watch --test-name-pattern "ToolRegistry"
+pnpm --filter frontend run test
+pnpm --filter frontend exec ng test --no-watch --test-name-pattern "ToolRegistry"
 ```
+
+`frontend`'s `test` script already carries `--no-watch`, deliberately: npm swallows a
+bare `--` while pnpm forwards it to Angular as an empty argument, which the builder
+rejects with a schema error. Keeping the flag inside the script makes it behave the
+same under any package manager. Use `test:watch` for the watching variant.
 
 **Do not run the frontend suite with bare `npx vitest`.** Angular's builder generates the
 TestBed bootstrap (`init-testbed.js`) as part of the test build; without it every spec that
@@ -56,8 +67,8 @@ and `frontend/tsconfig.spec.json`, or the `WebMCP` namespace resolves in the app
 fails in the test build.
 
 `shared/` must be built before either consumer — a missing `shared/dist` shows up as
-`TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `npm run dev`
-and `npm run build` handle the ordering.
+`TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `pnpm run dev`
+and `pnpm run build` handle the ordering.
 
 ## Layout
 
@@ -71,6 +82,33 @@ and `npm run build` handle the ordering.
 `frontend/` and `backend/` are separate codebases (own package.json, tsconfig, tests)
 that ship as **one** Firebase App Hosting deploy: a single Node process routes
 `/api/*` to Nest and everything else to Angular's SSR handler.
+
+## Why pnpm changes things
+
+The workspace manifest is **`pnpm-workspace.yaml`**, not a `workspaces` field in
+`package.json`. Add a new package there.
+
+pnpm links only what a package *declares*, with no hoisting. That is stricter than npm
+and it immediately exposed two real bugs npm had been masking:
+
+- **`@actuo/shared` was imported by 52 files but declared as a dependency nowhere.** It
+  resolved only because npm hoists every workspace package into the root `node_modules`.
+  Both consumers now declare `"@actuo/shared": "workspace:*"`.
+- **`shared` never declared `typescript`**, yet its build script runs `tsc`. It was
+  borrowing the root's binary.
+
+So: if an import resolves, some package.json must say so. A missing declaration now
+fails loudly at install or build time instead of working by accident.
+
+**`onlyBuiltDependencies` in `pnpm-workspace.yaml` is load-bearing.** pnpm blocks
+dependency lifecycle scripts by default, so native bindings never get built — esbuild,
+`@swc/core` (which vitest needs for Nest DI), `argon2`, and `lightningcss` all fail in
+different, confusing ways if dropped from that list. Add a package there when a new
+native dependency appears.
+
+pnpm also fixes the lightningcss problem npm had: it records every platform variant in
+the lockfile and installs the matching one, so the explicit `optionalDependencies` pin
+npm needed is gone.
 
 ## Tooling facts that differ from the planning docs
 
