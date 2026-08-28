@@ -234,6 +234,18 @@ use keywords it rejects (`additionalProperties`, `format`, `default`,
 than dropping them — so the model still knows a date is `YYYY-MM-DD` and that
 `limit` defaults to 20. Dropping them silently makes the model measurably worse.
 
+## Progress tracking
+
+`Progress.md` at the repo root tracks every PRD feature against what is actually
+implemented, and carries the **Definition of Done** gate that every task runs
+before its status changes. Update it in the same commit as the work — a tracker
+that lags is worse than none, because it is believed.
+
+It uses a `DEAD` status for code that exists and passes tests but has **no
+caller**, so it does nothing in the running app. Three headline features are in
+that state today; `DEAD` is separated from `PARTIAL` precisely because it looks
+finished in both the source and the test count.
+
 ## Architectural rules that must not be violated
 
 These are the load-bearing constraints — most bugs worth preventing here are violations of one of them.
