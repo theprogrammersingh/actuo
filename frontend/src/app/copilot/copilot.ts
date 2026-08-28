@@ -4,7 +4,6 @@ import {
   GeminiClient,
   GeminiError,
   KeyStore,
-  toFunctionDeclarations,
   type GeminiFunctionCall,
   type GeminiFunctionResult,
   type GeminiTurn,
@@ -259,7 +258,14 @@ export class Copilot {
       description: `${tool.description} (from ${hostOf(tool.origin)})`,
       inputSchema: tool.inputSchema ?? { type: 'object', properties: {} },
     }));
-    return toFunctionDeclarations([...local, ...remote]);
+    /*
+     * Returned RAW. GeminiClient.generate() runs toFunctionDeclarations()
+     * itself and wraps the result; converting here as well would hand it
+     * already-translated declarations whose schema sits under `parameters`
+     * rather than `inputSchema`, so the second conversion would find nothing
+     * and every tool would reach the model with no parameters at all.
+     */
+    return [...local, ...remote];
   }
 
   private pushError(error: unknown): void {
