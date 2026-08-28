@@ -1,0 +1,25 @@
+{
+  "name": "actuo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AI-native expense intelligence platform with a universal WebMCP Copilot",
+  "workspaces": [
+    "shared",
+    "frontend",
+    "backend"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run build:shared && concurrently -n backend,frontend -c blue,magenta \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "npm run start:dev --workspace backend",
+    "dev:frontend": "npm start --workspace frontend",
+    "build:shared": "npm run build --workspace shared",
+    "build": "npm run build:shared && npm run build --workspace backend && npm run build --workspace frontend",
+    "test": "npm run test --workspace backend && npm run test --workspace frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
