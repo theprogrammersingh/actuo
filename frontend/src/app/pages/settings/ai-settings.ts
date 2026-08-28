@@ -227,6 +227,20 @@ export const GEMINI_KEY_TESTER = new InjectionToken<KeyTester>('GEMINI_KEY_TESTE
           {{ selectedDescription() }}
         </p>
 
+        @if (!selectedSupportsTools()) {
+          <!--
+            The Copilot runs entirely on function calling. A model without it can
+            hold a conversation but cannot run a single tool, which looks like the
+            Copilot is broken rather than like a model limitation. Say so here,
+            at the moment of choosing.
+          -->
+          <p class="mt-2 rounded-md border border-status-warning/40 bg-surface p-2.5 text-xs text-status-warning" role="status">
+            This model cannot call tools, so the Copilot will be able to answer
+            questions but not search, submit, or approve anything. Pick a Gemini
+            model to let it act.
+          </p>
+        }
+
         @if (catalog.source() === 'default') {
           <p class="mt-1 text-xs text-muted">
             Showing the built-in model list — Actuo's config endpoint was not reachable.
@@ -286,6 +300,13 @@ export class AiSettings {
         description: 'Saved earlier, and not in the current model list — it may have been retired.',
       },
     ];
+  });
+
+  /** False only for models explicitly flagged as lacking function calling. */
+  protected readonly selectedSupportsTools = computed(() => {
+    const id = this.keys.model();
+    const option = this.modelOptions().find((model) => model.id === id);
+    return option?.supportsTools !== false;
   });
 
   protected readonly selectedDescription = computed(() => {

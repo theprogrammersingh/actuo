@@ -8,6 +8,15 @@ export interface GeminiModelOption {
   label: string;
   /** The one the settings screen preselects. */
   recommended: boolean;
+  /**
+   * Whether the model supports function calling. Omitted means yes.
+   *
+   * The Copilot only works through function calling, so a model without it can
+   * chat but cannot run a single tool. Gemma is served by the same API and does
+   * not accept the `tools` parameter, so it is flagged here rather than left to
+   * fail at request time.
+   */
+  supportsTools?: boolean;
 }
 
 export interface ClientConfig {
@@ -39,9 +48,19 @@ export class ConfigController {
   get(): ClientConfig {
     return {
       geminiModels: [
+        { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', recommended: false },
+        { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', recommended: false },
+        { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', recommended: false },
         { id: 'gemini-3-pro', label: 'Gemini 3 Pro', recommended: false },
         { id: 'gemini-3-flash', label: 'Gemini 3 Flash', recommended: true },
+        { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', recommended: false },
+        { id: 'gemini-flash-latest', label: 'Gemini Flash (latest)', recommended: false },
+        { id: 'gemini-pro-latest', label: 'Gemini Pro (latest)', recommended: false },
+        { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', recommended: false },
         { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', recommended: false },
+        // Chat-only: Gemma does not accept the `tools` parameter, so selecting
+        // it leaves the Copilot able to talk but unable to act.
+        { id: 'gemma-4-31b-it', label: 'Gemma 4 31B IT', recommended: false, supportsTools: false },
       ],
       // Flash is the default: the Copilot loop is many small function-calling
       // round-trips, where latency matters more than reasoning depth.

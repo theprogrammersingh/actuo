@@ -31,14 +31,51 @@ afterEach(() => {
 });
 
 describe('DEFAULT_GEMINI_MODELS', () => {
-  it('is the PRD §6.9 line-up, with Gemini 3 Pro as the default', () => {
+  it('offers the current line-up, with Gemini 3 Pro as the default', () => {
     expect(DEFAULT_GEMINI_MODELS.map((m) => m.id)).toEqual([
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
       'gemini-3-pro',
       'gemini-3-flash',
+      'gemini-3-flash-preview',
+      'gemini-flash-latest',
+      'gemini-pro-latest',
+      'gemini-2.5-pro',
       'gemini-2.5-flash',
+      'gemma-4-31b-it',
     ]);
     expect(DEFAULT_GEMINI_MODEL_ID).toBe('gemini-3-pro');
     expect(DEFAULT_GEMINI_MODELS.some((m) => m.id === DEFAULT_GEMINI_MODEL_ID)).toBe(true);
+  });
+
+  it('lists no id twice, so the dropdown cannot show duplicates', () => {
+    const ids = DEFAULT_GEMINI_MODELS.map((m) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  /**
+   * The Copilot only works through function calling. Flagging the exceptions is
+   * what lets the settings screen warn before a user discovers mid-demo that
+   * their model can talk but cannot act.
+   */
+  it('flags models that cannot call tools, and only those', () => {
+    const withoutTools = DEFAULT_GEMINI_MODELS.filter((m) => m.supportsTools === false).map(
+      (m) => m.id,
+    );
+    expect(withoutTools).toEqual(['gemma-4-31b-it']);
+
+    // Every Gemini model is assumed tool-capable; absent means yes.
+    for (const model of DEFAULT_GEMINI_MODELS) {
+      if (model.id.startsWith('gemini-')) {
+        expect(model.supportsTools, `${model.id} should not be flagged`).not.toBe(false);
+      }
+    }
+  });
+
+  it('the default model can call tools', () => {
+    const fallback = DEFAULT_GEMINI_MODELS.find((m) => m.id === DEFAULT_GEMINI_MODEL_ID);
+    expect(fallback?.supportsTools).not.toBe(false);
   });
 });
 

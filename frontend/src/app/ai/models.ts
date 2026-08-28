@@ -21,11 +21,25 @@ export interface GeminiModelOption {
   label: string;
   /** One-line positioning, shown under the label. */
   description?: string;
+  /**
+   * Whether the model can do function calling.
+   *
+   * The Copilot is built entirely on function calling, so a model without it
+   * cannot run a single tool — it can only chat. Gemma models are served by the
+   * same API but do not support the `tools` parameter, so they are marked
+   * `false` and the settings screen warns before the user finds out mid-demo.
+   *
+   * Absent means "yes"; only the exceptions are flagged.
+   */
+  supportsTools?: boolean;
 }
 
 export const DEFAULT_GEMINI_MODEL_ID = 'gemini-3-pro';
 
 export const DEFAULT_GEMINI_MODELS: readonly GeminiModelOption[] = [
+  { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
   {
     id: 'gemini-3-pro',
     label: 'Gemini 3 Pro',
@@ -37,9 +51,31 @@ export const DEFAULT_GEMINI_MODELS: readonly GeminiModelOption[] = [
     description: 'Fast and cheap, good at function calling. A sensible default for the Copilot.',
   },
   {
+    id: 'gemini-3-flash-preview',
+    label: 'Gemini 3 Flash Preview',
+    description: 'Preview channel. Behaviour can change without notice.',
+  },
+  {
+    id: 'gemini-flash-latest',
+    label: 'Gemini Flash (latest)',
+    description: 'Alias that always resolves to the current Flash model.',
+  },
+  {
+    id: 'gemini-pro-latest',
+    label: 'Gemini Pro (latest)',
+    description: 'Alias that always resolves to the current Pro model.',
+  },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Previous generation Pro.' },
+  {
     id: 'gemini-2.5-flash',
     label: 'Gemini 2.5 Flash',
     description: 'Previous generation. Use it if a Gemini 3 model is unavailable on your key.',
+  },
+  {
+    id: 'gemma-4-31b-it',
+    label: 'Gemma 4 31B IT',
+    description: 'Open-weights model. Chat only — it cannot call tools, so the Copilot cannot act.',
+    supportsTools: false,
   },
 ] as const;
 
@@ -82,6 +118,9 @@ function toOption(entry: unknown): GeminiModelOption | null {
   };
   if (typeof rawDescription === 'string' && rawDescription.trim()) {
     option.description = rawDescription.trim();
+  }
+  if (record['supportsTools'] === false) {
+    option.supportsTools = false;
   }
   return option;
 }
