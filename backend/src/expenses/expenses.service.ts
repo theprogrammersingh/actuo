@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { EXPENSE_PAGE_DEFAULT, EXPENSE_PAGE_MAX } from '@actuo/shared';
 import type { Expense, ExpenseStatus, Page, Role } from '@actuo/shared';
 import { EnvService } from '../config/env.service.js';
 import {
@@ -26,8 +27,6 @@ import {
   type TransitionAction,
 } from './expense-state-machine.js';
 
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
 
 /** Roles that can see and act on the whole org's expenses. */
 const APPROVER_ROLES: readonly Role[] = ['owner', 'admin'];
@@ -230,7 +229,7 @@ export class ExpensesService {
       userId: this.isApprover(user.role) ? undefined : user.userId,
       from: dto.from,
       to: dto.to,
-      limit: Math.min(dto.limit ?? DEFAULT_LIMIT, MAX_LIMIT),
+      limit: Math.min(dto.limit ?? EXPENSE_PAGE_DEFAULT, EXPENSE_PAGE_MAX),
       offset: dto.offset ?? 0,
     };
   }

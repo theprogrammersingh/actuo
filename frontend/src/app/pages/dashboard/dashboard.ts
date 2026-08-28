@@ -7,6 +7,7 @@ import {
   inject,
   resource,
 } from '@angular/core';
+import { EXPENSE_PAGE_MAX, fetchAllPages } from '@actuo/shared';
 import type { BudgetStatus, Expense, Organization, Page } from '@actuo/shared';
 
 import { ApiClient } from '../../core/api/api-client.js';
@@ -31,20 +32,14 @@ const TREND_DAYS = 14;
 const ACTIVITY_LIMIT = 6;
 
 /**
- * How many rows the dashboard pulls. It needs this month plus last month.
+ * The dashboard pages through the whole window rather than taking one page.
  *
- * 100 is not a preference — it is the hard ceiling the API enforces
- * (`SearchExpensesQueryDto` rejects anything larger with a 400), so this cannot
- * simply be raised.
- *
- * KNOWN LIMIT: every figure on this page is a sum derived from this one fetch,
- * so an organization with more than 100 expenses in the two-month window will
- * see totals that are silently low rather than an error. Fixing it properly
- * means either paginating here or adding a server-side aggregate endpoint
- * (`/api/analytics/summary` is already sketched in PRD §8.6 for exactly this).
- * Acceptable while the seed is ~26 rows; not acceptable for a real tenant.
+ * Every tile here is a sum, so a truncated fetch does not show *less* data — it
+ * shows a wrong number, with nothing on screen indicating anything is missing.
+ * That was the previous behaviour: a single 100-row page, and any org busier
+ * than that silently understated its own spend.
  */
-const FETCH_LIMIT = 100;
+const PAGE_SIZE = EXPENSE_PAGE_MAX;
 
 interface DashboardData {
   expenses: Expense[];
@@ -243,10 +238,14 @@ export class Dashboard {
     params: () => (this.isBrowser ? { from: this.window.from, to: this.window.to } : undefined),
     loader: async ({ params, abortSignal }): Promise<DashboardData> => {
       const [page, budgets, org] = await Promise.all([
-        this.api.get<Page<Expense>>(
-          '/expenses',
-          { from: params.from, to: params.to, limit: FETCH_LIMIT },
-          abortSignal,
+        fetchAllPages<Expense>(
+          (offset, limit) =>
+            this.api.get<Page<Expense>>(
+              '/expenses',
+              { from: params.from, to: params.to, limit, offset },
+              abortSignal,
+            ),
+          { limit: PAGE_SIZE },
         ),
         this.api.get<BudgetStatus[]>('/budgets/status', undefined, abortSignal),
         this.api.get<Organization>('/orgs/current', undefined, abortSignal),

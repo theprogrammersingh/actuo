@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import type { ExpensesService } from '../expenses/expenses.service.js';
+import { EXPENSE_PAGE_MAX } from '@actuo/shared';
 import { ReportsService } from './reports.service.js';
 
 const USER: AuthenticatedUser = {
@@ -24,7 +25,23 @@ function expense(i: number) {
 }
 
 /** Enough rows that generation spans several chunks, so a Stop lands mid-run. */
-const PAGE = { items: Array.from({ length: 40 }, (_, i) => expense(i)), total: 40, limit: 500, offset: 0 };
+/** A fake `list` that pages properly, so tests exercise the real loop. */
+function pagedList(total: number) {
+  return vi.fn(async (_user: unknown, dto: { limit?: number; offset?: number }) => {
+    const limit = dto.limit ?? 20;
+    const offset = dto.offset ?? 0;
+    return {
+      items: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) =>
+        expense(offset + i),
+      ),
+      total,
+      limit,
+      offset,
+    };
+  });
+}
+
+const PAGE = { items: Array.from({ length: 40 }, (_, i) => expense(i)), total: 40, limit: 100, offset: 0 };
 
 function createService(list = vi.fn().mockResolvedValue(PAGE)) {
   const expenses = { list } as unknown as ExpensesService;
@@ -128,5 +145,75 @@ describe('ReportsService', () => {
     await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('ready'), { timeout: 5000 });
 
     expect(service.get(USER, jobId).content).toContain('"Cafe ""Bloom"", Delhi"');
+  });
+});
+
+/**
+ * The regression that mattered and nothing covered.
+ *
+ * Report generation used to ask for `limit: 500`. The service clamps to
+ * EXPENSE_PAGE_MAX, so the request did not fail — it returned the first 100
+ * rows and produced a CSV that silently omitted the rest. For a financial
+ * report that is a confident wrong answer, which is worse than an error.
+ */
+describe('ReportsService completeness across pages', () => {
+  beforeEach(() => {
+    process.env.REPORT_CHUNK_DELAY_MS = '1';
+  });
+
+  it('includes every row when the range exceeds one page', async () => {
+    const list = pagedList(250);
+    const service = new ReportsService({ list } as unknown as ExpensesService);
+    const { jobId } = service.start(USER, { from: '2026-01-01', to: '2026-12-31' });
+
+    await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('ready'), { timeout: 15000 });
+
+    const job = service.get(USER, jobId);
+    expect(job.rows).toBe(250);
+    // header + every row
+    expect(job.content?.trim().split('\n')).toHaveLength(251);
+    // It really paged rather than asking for one oversized page.
+    expect(list.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('never requests more than the API allows', async () => {
+    const list = pagedList(250);
+    const service = new ReportsService({ list } as unknown as ExpensesService);
+    const { jobId } = service.start(USER, { from: '2026-01-01', to: '2026-12-31' });
+    await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('ready'), { timeout: 15000 });
+
+    for (const [, dto] of list.mock.calls) {
+      expect((dto as { limit: number }).limit).toBeLessThanOrEqual(EXPENSE_PAGE_MAX);
+    }
+  });
+
+  /**
+   * Deterministic rather than timing-based: the fake cancels the job itself
+   * once two pages are in, so the assertion does not depend on a sleep winning
+   * a race against instantly-resolving promises.
+   */
+  it('stops fetching when cancelled mid-pagination', async () => {
+    let service!: ReportsService;
+    let jobId = '';
+
+    const inner = pagedList(5000);
+    const list = vi.fn(async (user: unknown, dto: { limit?: number; offset?: number }) => {
+      const page = await inner(user, dto);
+      if (list.mock.calls.length >= 2 && jobId) service.cancel(USER, jobId);
+      return page;
+    });
+
+    service = new ReportsService({ list } as unknown as ExpensesService);
+    jobId = service.start(USER, { from: '2026-01-01', to: '2026-12-31' }).jobId;
+
+    await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('cancelled'), {
+      timeout: 5000,
+    });
+
+    const job = service.get(USER, jobId);
+    expect(job.content).toBeUndefined();
+    expect(job.rows).toBeUndefined();
+    // Abandoned after the cancel, not after draining all 50 pages.
+    expect(list.mock.calls.length).toBeLessThan(10);
   });
 });

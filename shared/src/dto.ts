@@ -45,6 +45,22 @@ export interface SearchExpensesQuery {
   offset?: number;
 }
 
+/**
+ * Page-size contract for expense listings.
+ *
+ * These live here because the cap is a *contract*, not a backend detail: the
+ * validation DTO, the service clamp, the `search_expenses` tool schema and every
+ * frontend call site all have to agree on it. They previously did not — the
+ * Expenses page asked for 200 and got a 400, while report generation asked for
+ * 500 and was silently clamped to 100, producing CSVs that omitted rows without
+ * saying so.
+ *
+ * Anything needing every row must paginate rather than raise a limit; see
+ * `fetchAllPages` in `pagination.ts`.
+ */
+export const EXPENSE_PAGE_DEFAULT = 20;
+export const EXPENSE_PAGE_MAX = 100;
+
 /** All list endpoints paginate (PRD §9 performance). */
 export interface Page<T> {
   items: T[];

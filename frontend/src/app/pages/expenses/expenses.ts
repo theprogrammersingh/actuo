@@ -8,6 +8,7 @@ import {
   resource,
   signal,
 } from '@angular/core';
+import { EXPENSE_PAGE_MAX } from '@actuo/shared';
 import type { Expense, Page } from '@actuo/shared';
 
 import { ApiClient } from '../../core/api/api-client.js';
@@ -27,10 +28,14 @@ import {
 } from './expense-filter.js';
 
 /**
- * One generous page. Filtering and sorting happen in the browser (see
- * `expense-filter.ts`), so this is the working set the screen operates on.
+ * One page. Filtering and sorting happen in the browser (`expense-filter.ts`)
+ * over everything loaded so far, and `Load more` fetches the next page.
+ *
+ * This asked for 200 before, which the API rejects outright with a 400 — its
+ * cap is EXPENSE_PAGE_MAX. Guessing the server's limit is what broke the page;
+ * reading it from the shared contract is what stops it happening again.
  */
-const FETCH_LIMIT = 200;
+const PAGE_SIZE = EXPENSE_PAGE_MAX;
 
 /**
  * Design Doc §3.3 — the dense, sortable, filterable expenses table, with
@@ -220,6 +225,34 @@ const FETCH_LIMIT = 200;
           }
         </ul>
       }
+
+      <!--
+        Only rendered when the server says there are more rows. Without the
+        count this would be a button that might do nothing, which is exactly
+        the kind of quiet dishonesty the old fixed limit produced.
+      -->
+      @if (hasMore()) {
+        <div class="mt-6 flex flex-col items-center gap-2">
+          <button
+            uiButton
+            variant="secondary"
+            type="button"
+            [loading]="loadingMore()"
+            (click)="loadMore()"
+          >
+            Load {{ remaining() < 100 ? remaining() : 100 }} more
+          </button>
+          <p class="text-xs text-muted" aria-live="polite">
+            Showing {{ loadedCount() }} of {{ totalAvailable() }}.
+          </p>
+        </div>
+      }
+
+      @if (loadMoreError(); as message) {
+        <p class="mt-3 text-center text-sm text-status-danger" role="status">
+          {{ message }}
+        </p>
+      }
     </section>
   `,
 })
@@ -248,10 +281,19 @@ export class Expenses {
    * into the SSR payload would flash a false failure before hydration.
    */
   readonly data = resource<Page<Expense>, { limit: number } | undefined>({
-    params: () => (this.isBrowser ? { limit: FETCH_LIMIT } : undefined),
+    params: () => (this.isBrowser ? { limit: PAGE_SIZE } : undefined),
     loader: ({ params, abortSignal }) =>
-      this.api.get<Page<Expense>>('/expenses/search', { limit: params.limit }, abortSignal),
+      this.api.get<Page<Expense>>(
+        '/expenses/search',
+        { limit: params.limit, offset: 0 },
+        abortSignal,
+      ),
   });
+
+  /** Pages appended by `Load more`, kept separate so a reload discards them. */
+  private readonly extraPages = signal<readonly Expense[]>([]);
+  protected readonly loadingMore = signal(false);
+  protected readonly loadMoreError = signal<string | null>(null);
 
   private readonly loaded = computed(() => (this.data.hasValue() ? this.data.value() : null));
 
@@ -263,7 +305,47 @@ export class Expenses {
     return error instanceof Error ? error.message : null;
   });
 
-  private readonly expenses = computed(() => this.loaded()?.items ?? []);
+  /** Everything fetched so far: the first page plus any appended pages. */
+  private readonly expenses = computed(() => [
+    ...(this.loaded()?.items ?? []),
+    ...this.extraPages(),
+  ]);
+
+  /** How many rows exist server-side, which is what makes `Load more` honest. */
+  protected readonly loadedCount = computed(() => this.expenses().length);
+  protected readonly totalAvailable = computed(() => this.loaded()?.total ?? 0);
+  protected readonly hasMore = computed(
+    () => this.expenses().length < this.totalAvailable(),
+  );
+  protected readonly remaining = computed(
+    () => this.totalAvailable() - this.expenses().length,
+  );
+
+  /**
+   * Fetch the next page and append it.
+   *
+   * Failures land in `loadMoreError` rather than the resource's error state:
+   * losing the rows already on screen because page three failed would be a
+   * worse outcome than showing a retryable message under them.
+   */
+  protected async loadMore(): Promise<void> {
+    if (this.loadingMore() || !this.hasMore()) return;
+    this.loadingMore.set(true);
+    this.loadMoreError.set(null);
+    try {
+      const next = await this.api.get<Page<Expense>>('/expenses/search', {
+        limit: PAGE_SIZE,
+        offset: this.expenses().length,
+      });
+      this.extraPages.update((rows) => [...rows, ...next.items]);
+    } catch (error) {
+      this.loadMoreError.set(
+        error instanceof Error ? error.message : 'Could not load more expenses.',
+      );
+    } finally {
+      this.loadingMore.set(false);
+    }
+  }
 
   protected readonly noExpensesAtAll = computed(() => this.expenses().length === 0);
 

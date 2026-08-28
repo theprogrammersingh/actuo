@@ -10,6 +10,8 @@
  */
 
 /** Mirrors WebMCP.ToolAnnotations from `webmcp-types`. */
+import { EXPENSE_PAGE_DEFAULT, EXPENSE_PAGE_MAX } from './dto.js';
+
 export interface ToolAnnotations {
   readOnlyHint?: boolean;
   untrustedContentHint?: boolean;
@@ -51,7 +53,12 @@ export const SEARCH_EXPENSES: ActuoToolContract = {
       status: { type: 'string', enum: [...EXPENSE_STATUSES], description: 'Filter by approval status.' },
       from: { type: 'string', format: 'date', description: 'Earliest expense date, YYYY-MM-DD.' },
       to: { type: 'string', format: 'date', description: 'Latest expense date, YYYY-MM-DD.' },
-      limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+      limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: EXPENSE_PAGE_MAX,
+        default: EXPENSE_PAGE_DEFAULT,
+      },
     },
     additionalProperties: false,
   },

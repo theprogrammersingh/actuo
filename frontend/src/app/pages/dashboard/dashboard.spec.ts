@@ -144,7 +144,7 @@ describe('Dashboard', () => {
     it('requests only the window it reports on', () => {
       expect(api.get).toHaveBeenCalledWith(
         '/expenses',
-        { from: '2026-07-01', to: '2026-08-14', limit: 100 },
+        { from: '2026-07-01', to: '2026-08-14', limit: 100, offset: 0 },
         expect.anything(),
       );
     });

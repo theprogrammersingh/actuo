@@ -11,6 +11,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { EXPENSE_PAGE_MAX } from '@actuo/shared';
 import {
   CURRENCIES,
   EXPENSE_STATUSES,
@@ -145,7 +146,7 @@ export class SearchExpensesQueryDto implements SearchExpensesQuery {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(EXPENSE_PAGE_MAX)
   limit?: number;
 
   @IsOptional()

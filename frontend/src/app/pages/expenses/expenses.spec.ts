@@ -1,3 +1,4 @@
+import { EXPENSE_PAGE_MAX } from '@actuo/shared';
 import type { Expense, Page } from '@actuo/shared';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -51,8 +52,8 @@ const ROWS: Expense[] = [
   }),
 ];
 
-function page(items: Expense[]): Page<Expense> {
-  return { items, total: items.length, limit: 200, offset: 0 };
+function page(items: Expense[], total = items.length): Page<Expense> {
+  return { items, total, limit: 100, offset: 0 };
 }
 
 describe('Expenses', () => {
@@ -137,8 +138,8 @@ describe('Expenses', () => {
       await settle();
     });
 
-    it('fetches one working page from the search endpoint', () => {
-      expect(api.get).toHaveBeenCalledWith('/expenses/search', { limit: 200 }, expect.anything());
+    it('fetches the first page at the maximum page size the API allows', () => {
+      expect(api.get).toHaveBeenCalledWith('/expenses/search', { limit: 100, offset: 0 }, expect.anything());
     });
 
     it('renders one table row per expense', () => {
@@ -312,5 +313,114 @@ describe('Expenses', () => {
       type('taj');
       expect((find('ui-input input') as HTMLInputElement).value).toBe('taj');
     });
+  });
+});
+
+/**
+ * Paging exists because the API caps a page at EXPENSE_PAGE_MAX. Asking for
+ * more than that used to return a 400 and break this screen outright, so the
+ * row count now comes from `total` and extra pages are appended on demand.
+ */
+describe('Expenses paging', () => {
+  let api: { get: ReturnType<typeof vi.fn> };
+  let fixture: ComponentFixture<Expenses>;
+
+  const text = () => fixture.nativeElement.textContent as string;
+  const buttons = () => Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
+  const loadMore = () => buttons().find((b) => b.textContent?.includes('more'));
+
+  function create() {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({ providers: [{ provide: ApiClient, useValue: api }] });
+    fixture = TestBed.createComponent(Expenses);
+    fixture.detectChanges();
+  }
+
+  const settle = async () => {
+    await fixture.whenStable();
+    fixture.detectChanges();
+  };
+
+  beforeEach(() => {
+    api = { get: vi.fn() };
+  });
+
+  it('offers no Load more when everything already fits on one page', async () => {
+    api.get.mockResolvedValue(page(ROWS));
+    create();
+    await settle();
+
+    expect(loadMore()).toBeUndefined();
+  });
+
+  it('offers Load more, and says how many rows exist, when the server has more', async () => {
+    api.get.mockResolvedValue(page(ROWS, 250));
+    create();
+    await settle();
+
+    expect(loadMore()).toBeDefined();
+    expect(text()).toContain(`Showing ${ROWS.length} of 250`);
+  });
+
+  it('requests the next page by offset and appends the rows', async () => {
+    const more: Expense[] = [{ ...ROWS[0], id: 'later-1', merchant: 'Later Cafe' }];
+    api.get.mockResolvedValueOnce(page(ROWS, ROWS.length + 1));
+    api.get.mockResolvedValueOnce({ items: more, total: ROWS.length + 1, limit: 100, offset: ROWS.length });
+
+    create();
+    await settle();
+    loadMore()!.click();
+    await settle();
+
+    expect(api.get).toHaveBeenLastCalledWith('/expenses/search', {
+      limit: 100,
+      offset: ROWS.length,
+    });
+    // Appended, not replaced — losing page one would be worse than not paging.
+    expect(text()).toContain('Later Cafe');
+    expect(text()).toContain(ROWS[0].merchant!);
+  });
+
+  it('hides Load more once every row is in', async () => {
+    const more: Expense[] = [{ ...ROWS[0], id: 'later-1', merchant: 'Later Cafe' }];
+    api.get.mockResolvedValueOnce(page(ROWS, ROWS.length + 1));
+    api.get.mockResolvedValueOnce({ items: more, total: ROWS.length + 1, limit: 100, offset: ROWS.length });
+
+    create();
+    await settle();
+    loadMore()!.click();
+    await settle();
+
+    expect(loadMore()).toBeUndefined();
+  });
+
+  /**
+   * A failed page must not discard the rows already on screen — that would be
+   * a worse outcome than not paging at all.
+   */
+  it('keeps the loaded rows when a later page fails, and says so', async () => {
+    api.get.mockResolvedValueOnce(page(ROWS, 250));
+    api.get.mockRejectedValueOnce(new Error('Network unavailable'));
+
+    create();
+    await settle();
+    loadMore()!.click();
+    await settle();
+
+    expect(text()).toContain('Network unavailable');
+    expect(text()).toContain(ROWS[0].merchant!);
+    expect(fixture.nativeElement.querySelector('ui-error-state')).toBeNull();
+  });
+
+  it('never asks for more than the API allows', async () => {
+    api.get.mockResolvedValue(page(ROWS, 250));
+    create();
+    await settle();
+    loadMore()!.click();
+    await settle();
+
+    for (const [, params] of api.get.mock.calls) {
+      expect((params as { limit: number }).limit).toBeLessThanOrEqual(EXPENSE_PAGE_MAX);
+    }
   });
 });
