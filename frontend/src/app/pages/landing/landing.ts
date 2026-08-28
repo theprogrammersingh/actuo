@@ -17,7 +17,7 @@ import { RouterLink } from '@angular/router';
   template: `
     <div class="min-h-dvh bg-canvas text-body">
       <header class="mx-auto flex max-w-5xl items-center gap-3 px-5 py-5">
-        <span class="bg-aurora size-8 rounded-lg" aria-hidden="true"></span>
+        <span class="bg-brand-teal size-8 rounded-lg" aria-hidden="true"></span>
         <span class="font-display text-xl">Actuo</span>
         <nav class="ml-auto flex items-center gap-2" aria-label="Account">
           <a routerLink="/login" class="flex min-h-11 items-center px-3 text-muted hover:text-body">

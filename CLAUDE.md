@@ -125,6 +125,14 @@ Two live compatibility traps for any `getTools()` consumer:
 ("Enables the WebMCP API") and `chrome://flags/#devtools-webmcp-support`, or launch with
 `--enable-blink-features=WebMCP`.
 
+**Both traps are confirmed on this machine, not theoretical.** Driving
+`/partner-demo/` in the local Chrome 152 with WebMCP enabled:
+`getTools()` returned `typeof inputSchema === 'string'` for every tool, and
+`executeTool()` resolved to a JSON **string** rather than an object. `registerTool`
+with `exposedTo`, the `readOnlyHint` annotation, and `executeTool()` all work
+end to end. `parseInputSchema()` and `parseToolResult()` are what keep that
+working — do not "simplify" them away.
+
 **Cross-origin requires native Chrome.** `@mcp-b/webmcp-polyfill` rejects non-empty
 `fromOrigins`/`exposedTo` with `NotSupportedError`, so the polyfill is a same-origin
 fallback only.
