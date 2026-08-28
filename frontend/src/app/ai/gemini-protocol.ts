@@ -24,10 +24,26 @@ export interface WireTextPart {
   text: string;
   /** Gemini 3 marks thought summaries with this flag. */
   thought?: boolean;
+  /** See {@link WireFunctionCallPart.thoughtSignature}. */
+  thoughtSignature?: string;
 }
 
 export interface WireFunctionCallPart {
   functionCall: { id?: string; name: string; args?: Record<string, unknown> };
+  /**
+   * Opaque token Gemini 3 attaches to a function call, carrying the reasoning
+   * that produced it.
+   *
+   * It MUST be echoed back verbatim when the model turn is replayed in
+   * `contents`, or the API rejects the next request with HTTP 400:
+   *
+   *   "Function call is missing a thought_signature in functionCall parts.
+   *    This is required for tools to work correctly."
+   *
+   * Google's own SDKs do this silently. We call the REST API directly — a
+   * deliberate choice for bundle size and CSP — so preserving it is ours to do.
+   */
+  thoughtSignature?: string;
 }
 
 export interface WireFunctionResponsePart {
@@ -78,6 +94,11 @@ export interface WireGenerateContentResponse {
 export interface GeminiFunctionCall {
   /** Present when Gemini emits parallel calls; echo it back untouched. */
   id?: string;
+  /**
+   * Opaque reasoning token that must be echoed back with this call. Each call
+   * in a parallel batch carries its own. Never synthesise or reuse one.
+   */
+  thoughtSignature?: string;
   name: string;
   args: Record<string, unknown>;
 }
@@ -94,7 +115,20 @@ export interface GeminiFunctionResult {
 
 export type GeminiTurn =
   | { role: 'user'; text: string }
-  | { role: 'model'; text?: string; functionCalls?: GeminiFunctionCall[] }
+  | {
+      role: 'model';
+      text?: string;
+      functionCalls?: GeminiFunctionCall[];
+      /**
+       * The candidate's parts exactly as Gemini returned them.
+       *
+       * When present these are replayed byte-for-byte instead of being rebuilt
+       * from `text`/`functionCalls`. Rebuilding drops any field we do not model
+       * — thought signatures being the one that breaks multi-turn tool use —
+       * and the set of such fields is Google's to change, not ours to track.
+       */
+      parts?: WirePart[];
+    }
   | { role: 'tool'; results: GeminiFunctionResult[] };
 
 export interface GeminiUsage {
@@ -154,6 +188,13 @@ export function turnsToContents(turns: readonly GeminiTurn[]): WireContent[] {
     }
 
     if (turn.role === 'model') {
+      // Preferred path: hand back precisely what the model sent us.
+      if (turn.parts && turn.parts.length > 0) {
+        contents.push({ role: 'model', parts: turn.parts });
+        continue;
+      }
+
+      // Fallback for turns assembled by hand (and by tests).
       const parts: WirePart[] = [];
       if (turn.text) parts.push({ text: turn.text });
       for (const call of turn.functionCalls ?? []) {
@@ -162,7 +203,9 @@ export function turnsToContents(turns: readonly GeminiTurn[]): WireContent[] {
           args: call.args ?? {},
         };
         if (call.id) functionCall.id = call.id;
-        parts.push({ functionCall });
+        const part: WireFunctionCallPart = { functionCall };
+        if (call.thoughtSignature) part.thoughtSignature = call.thoughtSignature;
+        parts.push(part);
       }
       if (parts.length > 0) contents.push({ role: 'model', parts });
       continue;
@@ -253,6 +296,7 @@ export function parseGenerateContentResponse(
         args: part.functionCall.args ?? {},
       };
       if (part.functionCall.id) call.id = part.functionCall.id;
+      if (part.thoughtSignature) call.thoughtSignature = part.thoughtSignature;
       functionCalls.push(call);
       continue;
     }
@@ -287,6 +331,8 @@ export function parseGenerateContentResponse(
   const turn: GeminiTurn = { role: 'model' };
   if (text) turn.text = text;
   if (functionCalls.length > 0) turn.functionCalls = functionCalls;
+  // Keep the originals so the next request can replay them untouched.
+  if (parts.length > 0) turn.parts = parts;
 
   const usageMetadata = response.usageMetadata;
   const usage: GeminiUsage | undefined = usageMetadata

@@ -205,6 +205,27 @@ request; the access token deliberately carries no role claim.
 - `core/api/` — `ApiClient`. `core/theme/` — `ThemeService`.
 - `pages/add-expense/` — the declarative WebMCP form.
 
+## Thought signatures (Gemini 3 function calling)
+
+Gemini 3 attaches an opaque `thoughtSignature` to `functionCall` parts. It **must**
+be echoed back verbatim when the model turn is replayed in `contents`, or the next
+request fails with HTTP 400:
+
+> Function call is missing a thought_signature in functionCall parts. This is
+> required for tools to work correctly.
+
+Google's own SDKs handle this silently; we call the REST API directly (deliberately
+— bundle size and a tight CSP), so it is ours to preserve.
+
+The defence is structural rather than field-by-field: a model turn carries the
+candidate's **raw `parts`**, and `turnsToContents()` replays them byte-for-byte
+instead of rebuilding them from `text`/`functionCalls`. Rebuilding drops any field
+we do not model, and which fields exist is Google's to change. **Do not "simplify"
+that by reconstructing parts** — it re-introduces the bug, and only on the *second*
+request of a tool loop, so single-turn tests will not catch it.
+
+Each call in a parallel batch has its own signature; never synthesise or reuse one.
+
 ## Gemini schema translation
 
 Gemini's function-calling dialect is an OpenAPI 3.0 subset, and our contracts

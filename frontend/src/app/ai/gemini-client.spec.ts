@@ -193,7 +193,9 @@ describe('GeminiClient', () => {
       expect(result.functionCalls).toEqual([]);
       expect(result.finishReason).toBe('STOP');
       expect(result.usage).toMatchObject({ promptTokens: 11, responseTokens: 7, totalTokens: 18 });
-      expect(result.turn).toEqual({ role: 'model', text: 'You spent ₹4,200 on travel.' });
+      // The turn also carries the raw parts, which is what lets a later
+      // request replay thought signatures verbatim.
+      expect(result.turn).toMatchObject({ role: 'model', text: 'You spent ₹4,200 on travel.' });
     });
 
     it('returns the model\'s chosen function calls with parsed args', async () => {
