@@ -38,7 +38,7 @@
   --shadow-glow-violet: 0 0 24px 0 rgba(139, 92, 246, 0.35);
 
   /* Typography — §2.3. Display gets character; body is proven at small sizes. */
-  --font-display: 'General Sans', 'Cabinet Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', 'General Sans', ui-sans-serif, system-ui, sans-serif;
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
 }
@@ -65,6 +65,20 @@
   --color-line: #dfe4ec;
   --color-body: #10141c;
   --color-muted: #5b6473;
+
+  /*
+   * The status palette in §2.2 is tuned for a dark ground. As *text on white*
+   * those same values fail WCAG AA badly — #34D399 lands near 1.9:1, well under
+   * the 4.5:1 floor §3.5 requires. So light mode gets darkened variants of the
+   * same hues: the signal colour is unchanged, only its lightness is.
+   *
+   * Components should therefore always read --color-status-*, never the literal
+   * hex, so a status pill is legible in both themes without per-component CSS.
+   */
+  --color-status-success: #0f766e;
+  --color-status-warning: #b45309;
+  --color-status-danger: #b91c1c;
+  --color-status-info: #1d4ed8;
 }
 
 @layer base {

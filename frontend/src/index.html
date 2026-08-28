@@ -2,10 +2,56 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Frontend</title>
+    <title>Actuo — AI-native expense intelligence</title>
     <base href="/" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Actuo is an expense management platform where every action is also a WebMCP tool, so an AI agent can operate it with full transparency."
+    />
     <link rel="icon" type="image/x-icon" href="favicon.ico" />
+
+    <!--
+      Design Doc §2.3 asks for a geometric display face with character (it names
+      Cabinet Grotesk / General Sans) and a proven UI face for data-dense screens.
+      Space Grotesk is the closest equivalent available on Google Fonts, which
+      keeps this to a single external font origin and therefore a tighter CSP —
+      and CSP carries real weight here, because an XSS is Gemini-key theft.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Matches the Aurora Ledger dark ground so the PWA chrome does not flash white. -->
+    <meta name="theme-color" content="#0a0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)" />
+
+    <script>
+      /*
+       * Apply the stored theme before first paint.
+       *
+       * The app server-renders, so without this the dark shell would paint, then
+       * flip to light for a user who chose light — a visible flash on every load.
+       * Kept inline and tiny on purpose; ThemeService owns the theme from here on.
+       */
+      (function () {
+        try {
+          var stored = localStorage.getItem('actuo.theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          /* private mode / storage disabled — fall back to the dark default */
+        }
+      })();
+    </script>
   </head>
   <body>
     <app-root></app-root>

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pageturner Books — WebMCP partner demo</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { color-scheme: dark; --bg:#0f1216; --card:#171c26; --line:#232936; --ink:#e6e9ef; --muted:#9aa3b2; --accent:#7dd3fc; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:2rem 1.25rem; background:var(--bg); color:var(--ink);
+         font:16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size:1.6rem; margin:0 0 .25rem; }
+  .lede { color:var(--muted); margin:0 0 2rem; }
+  .note { border:1px solid var(--line); border-left:3px solid var(--accent);
+          background:var(--card); border-radius:.5rem; padding:1rem 1.1rem; margin-bottom:2rem; }
+  .note h2 { font-size:.95rem; margin:0 0 .5rem; }
+  .note p { margin:.35rem 0; color:var(--muted); font-size:.9rem; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size:.85em;
+         background:#0b0e12; border:1px solid var(--line); border-radius:.25rem; padding:.1rem .35rem; }
+  ul.books { list-style:none; padding:0; margin:0; display:grid; gap:.75rem; }
+  li.book { border:1px solid var(--line); background:var(--card); border-radius:.6rem;
+            padding:.9rem 1rem; display:flex; justify-content:space-between; gap:1rem; align-items:baseline; }
+  .title { font-weight:600; }
+  .author { color:var(--muted); font-size:.9rem; }
+  .price { font-variant-numeric: tabular-nums; color:var(--accent); }
+  #status { margin-top:2rem; padding:.85rem 1rem; border-radius:.5rem;
+            border:1px solid var(--line); background:var(--card); font-size:.9rem; color:var(--muted); }
+  #log { margin-top:.75rem; font-family: ui-monospace, Menlo, monospace; font-size:.8rem;
+         color:var(--ink); white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pageturner Books</h1>
+  <p class="lede">A deliberately unrelated site. It knows nothing about Actuo.</p>
+
+  <div class="note">
+    <h2>What this page is for</h2>
+    <p>
+      This page registers its own WebMCP tools — <code>search_books</code> and
+      <code>get_book_price</code> — and exposes them to Actuo's origin via
+      <code>exposedTo</code>. Actuo's Copilot discovers them with
+      <code>getTools({ fromOrigins })</code> and runs them through
+      <code>executeTool()</code>.
+    </p>
+    <p>
+      Nothing here is Actuo-specific, which is the point: the Copilot is
+      site-agnostic, so it can drive any WebMCP-enabled page.
+    </p>
+    <p>
+      Requires Chrome with the WebMCP flag on
+      (<code>chrome://flags/#enable-webmcp-testing</code>). Cross-origin tools
+      cannot be polyfilled — the polyfill rejects <code>exposedTo</code> with
+      <code>NotSupportedError</code>.
+    </p>
+  </div>
+
+  <ul class="books" id="books"></ul>
+
+  <div id="status">Checking for WebMCP…</div>
+  <div id="log"></div>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  const CATALOG = [
+    { id: 'b1', title: 'The Left Hand of Darkness', author: 'Ursula K. Le Guin', genre: 'sci-fi', price: 499 },
+    { id: 'b2', title: 'Piranesi',                  author: 'Susanna Clarke',   genre: 'fantasy', price: 399 },
+    { id: 'b3', title: 'The Overstory',             author: 'Richard Powers',   genre: 'fiction', price: 549 },
+    { id: 'b4', title: 'A Memory Called Empire',    author: 'Arkady Martine',   genre: 'sci-fi', price: 459 },
+    { id: 'b5', title: 'The Country of the Blind',  author: 'Andrew Leland',    genre: 'memoir', price: 429 },
+  ];
+
+  // The origin allowed to call these tools. Same-origin in local dev.
+  const ACTUO_ORIGIN = new URLSearchParams(location.search).get('actuo') || location.origin;
+
+  const statusEl = document.getElementById('status');
+  const logEl = document.getElementById('log');
+
+  document.getElementById('books').innerHTML = CATALOG.map((b) => `
+    <li class="book">
+      <span><span class="title">${b.title}</span><br><span class="author">${b.author}</span></span>
+      <span class="price">₹${b.price}</span>
+    </li>`).join('');
+
+  const log = (msg) => {
+    logEl.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
+  };
+
+  const searchBooks = {
+    name: 'search_books',
+    title: 'Search books',
+    description: 'Search the Pageturner catalog by title, author, or genre.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words to match against title or author.' },
+        genre: { type: 'string', enum: ['sci-fi', 'fantasy', 'fiction', 'memoir'] },
+      },
+    },
+    annotations: { readOnlyHint: true },
+    execute: async ({ query, genre }) => {
+      log(`search_books(${JSON.stringify({ query, genre })})`);
+      const q = (query || '').toLowerCase();
+      const matches = CATALOG.filter((b) =>
+        (!genre || b.genre === genre) &&
+        (!q || b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q)));
+      return { count: matches.length, books: matches };
+    },
+  };
+
+  const getBookPrice = {
+    name: 'get_book_price',
+    title: 'Get book price',
+    description: 'Return the price of one book by its id.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The book id, e.g. b1.' } },
+      required: ['id'],
+    },
+    annotations: { readOnlyHint: true },
+    execute: async ({ id }) => {
+      log(`get_book_price(${JSON.stringify({ id })})`);
+      const book = CATALOG.find((b) => b.id === id);
+      if (!book) throw new Error(`No book with id "${id}".`);
+      return { id: book.id, title: book.title, price: book.price, currency: 'INR' };
+    },
+  };
+
+  async function register() {
+    const context = document.modelContext;
+    if (!context) {
+      statusEl.textContent =
+        'WebMCP is not available. Enable chrome://flags/#enable-webmcp-testing and reload.';
+      return;
+    }
+
+    try {
+      // exposedTo is what makes these callable from Actuo's origin. Under the
+      // polyfill this rejects with NotSupportedError — cross-origin needs native.
+      for (const tool of [searchBooks, getBookPrice]) {
+        await context.registerTool(tool, { exposedTo: [ACTUO_ORIGIN] });
+      }
+      statusEl.textContent =
+        `Registered search_books and get_book_price, exposed to ${ACTUO_ORIGIN}.`;
+      log('tools registered');
+    } catch (error) {
+      statusEl.textContent = `Could not register tools: ${error.name} — ${error.message}`;
+    }
+  }
+
+  register();
+})();
+</script>
+</body>
+</html>
