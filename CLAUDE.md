@@ -264,6 +264,23 @@ composes them in one process.
 - `createNodeRequestHandler` returns its argument unchanged, so the exported
   `reqHandler` *is* the Express app and mounts directly as middleware.
 
+**The App Hosting buildpack reads `engines.pnpm`, and ignores `packageManager`.**
+It resolves that field as a *range* against the npm registry and installs the
+highest match, so `">=10"` quietly became pnpm 12 on the build machine while
+local and CI stayed on 10.14.0. The buildpack's own >= 11 branch is broken — it
+unpacks the standalone GitHub tarball, then launches it as
+`node <layer>/bin/dist/pnpm.mjs`, which only exists in the npm package layout —
+so the build died with `MODULE_NOT_FOUND` before installing a single dependency.
+`engines.pnpm` is now an exact `10.14.0` matching `packageManager`. Bumping it
+past 11 breaks the deploy and nothing else, so no local check will catch it.
+
+**Never give `NODE_ENV` BUILD availability in `apphosting.yaml`.** The buildpack
+installs with `pnpm install --prod`, which under `NODE_ENV=production` drops
+every devDependency — and this build *is* devDependencies: the Angular CLI, the
+Nest CLI, typescript. Nothing in the build reads `NODE_ENV` anyway (Angular
+takes `production` from `angular.json`); the single reader in the repo is
+`EnvService.partnerOrigin`, per request, at runtime.
+
 **`NG_ALLOWED_HOSTS` is load-bearing, and it fails silently.** Angular 21 checks
 the `Host` header against an allowlist (SSRF protection). Off the list it does not
 error — it falls back to **client-side rendering**, quietly discarding the SSR and
