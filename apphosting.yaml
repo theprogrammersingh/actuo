@@ -49,7 +49,7 @@ env:
   # Verify after a deploy: the HTML for `/` must contain `ng-server-context`.
   # If it does not, this value is wrong and the site is rendering client-side.
   - variable: NG_ALLOWED_HOSTS
-    value: "*.hosted.app,*.run.app"
+    value: "*.web.app,*.run.app,*.firebaseapp.com,*.programmersingh.dev"
     availability: [RUNTIME]
 
   # The Supabase project URL is not a credential; the service-role key below is.
