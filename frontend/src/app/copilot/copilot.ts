@@ -76,6 +76,9 @@ export class Copilot {
   /** Cross-origin tools discovered from other origins, if any. */
   private readonly remoteTools = signal<readonly NormalizedTool[]>([]);
 
+  /** What the Copilot can currently reach on another origin. */
+  readonly crossOriginTools = this.remoteTools.asReadonly();
+
   toggle(): void {
     this.open.update((v) => !v);
   }
@@ -84,10 +87,30 @@ export class Copilot {
     this.open.set(false);
   }
 
-  /** Pull in tools exposed by another origin (the partner-demo page). */
+  /**
+   * Pull in tools exposed by another origin (the partner-demo page).
+   *
+   * Only genuinely cross-origin descriptors are kept: `getTools()` returns this
+   * document's own tools too, and those are already in the registry with their
+   * `execute` functions attached. Keeping a same-origin duplicate here would
+   * route it through `executeTool()` — the one path that needs the Chrome flag
+   * — for no reason.
+   */
   async discoverRemoteTools(origins: string[]): Promise<void> {
     const tools = await this.registry.discover({ fromOrigins: origins });
     this.remoteTools.set(tools.filter((tool) => tool.isCrossOrigin));
+  }
+
+  /**
+   * Forget the other origin's tools.
+   *
+   * Called when the page hosting the partner iframe goes away. Without it the
+   * Copilot keeps offering `search_books` to the model after the document that
+   * implements it is gone, and every call fails with a confusing error instead
+   * of the tool simply not being on the menu.
+   */
+  clearRemoteTools(): void {
+    this.remoteTools.set([]);
   }
 
   async send(message: string): Promise<void> {

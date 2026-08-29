@@ -173,6 +173,45 @@ describe('Expenses', () => {
     });
   });
 
+  describe('currency labelling', () => {
+    /**
+     * `baseCurrency || currency` printed an unconverted $50 under the org's ₹
+     * symbol. There is no FX pass (PRD §6.5), so `convertedAmount` is null for
+     * every foreign row — the label was wrong for all of them, by roughly a
+     * factor of ninety.
+     */
+    it('labels an unconverted row with the currency it was filed in', async () => {
+      api.get.mockResolvedValue(
+        page([expense({ id: 'usd', merchant: 'AWS', amount: 50, currency: 'USD', convertedAmount: null })]),
+      );
+      create();
+      await settle();
+
+      expect(text()).toContain('$');
+      expect(text()).not.toContain('₹');
+    });
+
+    it('labels a converted row with the org base currency', async () => {
+      api.get.mockResolvedValue(
+        page([
+          expense({
+            id: 'usd',
+            merchant: 'AWS',
+            amount: 50,
+            currency: 'USD',
+            convertedAmount: 4200,
+            baseCurrency: 'INR',
+          }),
+        ]),
+      );
+      create();
+      await settle();
+
+      expect(text()).toContain('₹');
+      expect(text()).toContain('4,200');
+    });
+  });
+
   describe('sorting', () => {
     beforeEach(async () => {
       api.get.mockResolvedValue(page(ROWS));

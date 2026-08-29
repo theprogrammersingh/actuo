@@ -3,7 +3,7 @@ import type { Expense } from '@actuo/shared';
 /**
  * Which amount field counts, and which rows count at all.
  *
- * These two rules are shared by every screen that totals money — dashboard,
+ * These rules are shared by every screen that totals money — dashboard,
  * expenses, budgets — so they live here rather than in any one feature. If they
  * ever disagree between screens the app contradicts itself about how much was
  * spent, which is the worst possible bug in a finance tool.
@@ -11,13 +11,31 @@ import type { Expense } from '@actuo/shared';
 
 /**
  * `convertedAmount` is the value in the org's base currency; `amount` is
- * whatever currency the user filed in. Summing `amount` across currencies would
- * silently add rupees to dollars, so the converted value always wins when
- * present.
+ * whatever currency the user filed in.
+ *
+ * This is the value for **one row** — what to print next to it, and what to
+ * sort it by. It is not safe to add across rows: see {@link sumSpend}.
  */
 export function expenseAmount(expense: Expense): number {
   const value = expense.convertedAmount ?? expense.amount;
   return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Whether this row's value is expressed in the org's base currency.
+ *
+ * There is no FX pass yet (PRD §6.5), so `convertedAmount` is filled only when
+ * the expense was already filed in the base currency and is `null` otherwise.
+ * Anything false here is a number in a *different unit*, and the currency to
+ * print beside it is `expense.currency`, not `expense.baseCurrency`.
+ */
+export function isConverted(expense: Expense): boolean {
+  return expense.convertedAmount !== null || expense.currency === expense.baseCurrency;
+}
+
+/** The currency symbol a single row must be labelled with. */
+export function expenseCurrency(expense: Expense): string {
+  return isConverted(expense) ? expense.baseCurrency || expense.currency : expense.currency;
 }
 
 /**
@@ -31,4 +49,47 @@ export function expenseAmount(expense: Expense): number {
  */
 export function isSpend(expense: Expense): boolean {
   return expense.status !== 'rejected' && expense.deletedAt === null;
+}
+
+/** A total, plus what it could not account for. */
+export interface SpendTotal {
+  /** Sum of qualifying rows that are in the base currency. */
+  total: number;
+  /** Qualifying rows left out because they are in another currency. */
+  excluded: number;
+}
+
+/**
+ * Total spend across rows — the only safe way to add expenses together.
+ *
+ * Every caller used to `reduce` over `expenseAmount`, which falls back to the
+ * raw `amount` when there is no converted value. With no FX pass that meant
+ * every foreign row was added at face value: the seed data alone has INR, USD
+ * and EUR, so the dashboard was adding dollars to rupees at 1:1 and presenting
+ * the result as a rupee figure.
+ *
+ * So unconvertible rows are excluded and **counted**. A total that says what it
+ * left out is honest; one that quietly adds three currencies is not. The count
+ * is what the UI needs to say so. When a real FX pass starts filling
+ * `convertedAmount`, those rows re-enter the total with no change here.
+ */
+export function sumSpend(expenses: readonly Expense[]): SpendTotal {
+  let total = 0;
+  let excluded = 0;
+
+  for (const expense of expenses) {
+    if (!isSpend(expense)) continue;
+    if (isConverted(expense)) total += expenseAmount(expense);
+    else excluded += 1;
+  }
+
+  return { total, excluded };
+}
+
+/** One line of copy for an excluded-rows notice, or `null` when nothing was. */
+export function excludedNotice(excluded: number): string | null {
+  if (excluded <= 0) return null;
+  const noun = excluded === 1 ? 'expense' : 'expenses';
+  const verb = excluded === 1 ? 'isn’t' : 'aren’t';
+  return `${excluded} ${noun} in other currencies ${verb} included — currency conversion isn’t live yet.`;
 }

@@ -16,6 +16,7 @@ function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
     remaining: budgeted - spent,
     utilization: budgeted > 0 ? spent / budgeted : Number.POSITIVE_INFINITY,
     currency: 'INR',
+    unconvertedCount: 0,
     ...overrides,
   };
 }
@@ -152,6 +153,32 @@ describe('Budgets', () => {
     it('does not overstate the org total — a healthy category offsets it', () => {
       // Travel is 2,500 over, Meals has 3,000 left: 500 left overall.
       expect(text()).toContain('₹500 left this month.');
+    });
+  });
+
+  describe('unconverted spend', () => {
+    /**
+     * The server's `spent` excludes expenses it could not express in the base
+     * currency, because there is no FX pass (PRD §6.5). A bar drawn from a
+     * partial figure with nothing saying so reads as a complete one.
+     */
+    it('says how many expenses the figures leave out', async () => {
+      api.get.mockResolvedValue([
+        budget({ categoryId: 'a', categoryName: 'Travel', unconvertedCount: 2 }),
+        budget({ categoryId: 'b', categoryName: 'Meals', unconvertedCount: 1 }),
+      ]);
+      create();
+      await settle();
+
+      expect(text()).toContain('3 expenses in other currencies');
+    });
+
+    it('says nothing when every expense was in the base currency', async () => {
+      api.get.mockResolvedValue(HEALTHY);
+      create();
+      await settle();
+
+      expect(text()).not.toContain('in other currencies');
     });
   });
 

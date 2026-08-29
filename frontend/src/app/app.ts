@@ -1,8 +1,16 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  effect,
+  inject,
+} from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CopilotPanel } from './copilot/copilot-panel.js';
 import { Session } from './core/session/session.js';
 import { ThemeService } from './core/theme/theme-service.js';
+import { ToolCallAudit } from './webmcp/tool-call-audit.js';
+import { ToolRegistry } from './webmcp/tool-registry.js';
 import { ToolSession } from './webmcp/tool-session.js';
 
 interface NavItem {
@@ -16,6 +24,7 @@ const NAV: NavItem[] = [
   { path: '/expenses', label: 'Expenses', icon: '≡' },
   { path: '/add', label: 'Add', icon: '＋' },
   { path: '/budgets', label: 'Budgets', icon: '◑' },
+  { path: '/agent', label: 'Agent', icon: '✦' },
   { path: '/settings', label: 'Settings', icon: '⚙' },
 ];
 
@@ -113,6 +122,9 @@ export class App {
   protected readonly session = inject(Session);
   protected readonly theme = inject(ThemeService);
   private readonly tools = inject(ToolSession);
+  private readonly registry = inject(ToolRegistry);
+  private readonly audit = inject(ToolCallAudit);
+  private readonly destroyRef = inject(DestroyRef);
 
   protected readonly nav = NAV;
 
@@ -124,6 +136,18 @@ export class App {
     });
 
     /*
+     * Ask the server how many expenses are waiting on a decision, as soon as
+     * there is a session to ask with.
+     *
+     * Without this the count sits at 0 forever, `ToolSession`'s gate never
+     * opens, and `approve_expense` never registers — the state-gated tool
+     * (PRD §7) existed, was tested, and did nothing in the running app.
+     */
+    effect(() => {
+      if (this.session.isAuthenticated()) void this.session.refreshPendingApprovals();
+    });
+
+    /*
      * Keep the state-gated `approve_expense` in step with reality. Every change
      * here fires `toolchange`, which is exactly what an observing agent watches
      * — and what makes the tool visibly appear and disappear in the demo.
@@ -132,6 +156,34 @@ export class App {
       this.tools.setRole(this.session.role());
       this.tools.setPendingApprovals(this.session.pendingApprovals());
     });
+
+    /*
+     * Everything that hangs off a tool call, in one place.
+     *
+     * The shell is where this belongs: `ToolRegistry` stays a pure registry
+     * with no HTTP or session dependencies, and there is exactly one
+     * subscription rather than one per consumer.
+     */
+    const stop = this.registry.observe((invocation) => {
+      this.audit.record({
+        // Everything reaching the registry is agent-initiated — the in-page
+        // Copilot, or an external browser agent through WebMCP's `execute`.
+        // The one human tool caller is the declarative Add Expense form, which
+        // logs itself because only it can tell the two apart.
+        actor: 'agent',
+        toolName: invocation.toolName,
+        input: invocation.input,
+        output: invocation.error ? { error: invocation.error } : invocation.output,
+      });
+
+      // An approval decision changes the queue, which closes the gate. Reads
+      // cannot, and `search_expenses` runs often enough that polling on it
+      // would be a request per question.
+      if (this.registry.isMutating(invocation.toolName)) {
+        void this.session.refreshPendingApprovals();
+      }
+    });
+    this.destroyRef.onDestroy(stop);
   }
 
   protected async signOut(): Promise<void> {

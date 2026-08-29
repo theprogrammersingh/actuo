@@ -49,6 +49,14 @@ export const routes: Routes = [
     title: 'Budgets · Actuo',
   },
   {
+    // The WebMCP surface, made visible: what this page publishes, what it can
+    // reach on other origins, and every tool call that has run (PRD §7).
+    path: 'agent',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/agent/agent.js').then((m) => m.Agent),
+    title: 'Agent tools · Actuo',
+  },
+  {
     path: 'settings',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/settings/settings.js').then((m) => m.Settings),

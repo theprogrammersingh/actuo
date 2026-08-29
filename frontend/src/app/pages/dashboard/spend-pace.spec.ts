@@ -109,12 +109,12 @@ describe('totalForMonth', () => {
   ];
 
   it('sums only the requested month', () => {
-    expect(totalForMonth(rows, '2026-08')).toBe(350);
-    expect(totalForMonth(rows, '2026-07')).toBe(999);
+    expect(totalForMonth(rows, '2026-08').total).toBe(350);
+    expect(totalForMonth(rows, '2026-07').total).toBe(999);
   });
 
   it('is zero for a month with nothing in it', () => {
-    expect(totalForMonth(rows, '2026-09')).toBe(0);
+    expect(totalForMonth(rows, '2026-09').total).toBe(0);
   });
 });
 

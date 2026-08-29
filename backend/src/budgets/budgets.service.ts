@@ -50,6 +50,11 @@ export class BudgetsService {
    *  - Categories with spend but *no* budget also appear, with `budgeted: 0`
    *    and `utilization: 0`. That is the "unbudgeted spend" row; hiding it
    *    would make the totals silently disagree with the expense list.
+   *
+   * `spent` counts only expenses that have a value in the org's base currency.
+   * Anything filed in another currency has no converted amount yet (PRD §6.5),
+   * and is reported as `unconvertedCount` rather than added at face value —
+   * see the note in `sumByCategory`.
    */
   async status(user: AuthenticatedUser, query: BudgetStatusQueryDto): Promise<BudgetStatus[]> {
     const { from, to } = resolveWindow(query);
@@ -63,7 +68,7 @@ export class BudgetsService {
 
     const currency = org?.baseCurrency ?? this.env.baseCurrency;
     const categoryNames = new Map(categories.map((c) => [c.id, c.name]));
-    const spendByCategory = new Map(spendRows.map((row) => [row.categoryId, row.total]));
+    const spendByCategory = new Map(spendRows.map((row) => [row.categoryId, row]));
 
     // Union of "has a budget" and "has spend", so neither side can hide a row.
     const keys = new Set<string | null>([
@@ -75,7 +80,8 @@ export class BudgetsService {
     for (const categoryId of keys) {
       const budget = budgets.find((b) => b.categoryId === categoryId);
       const budgeted = budget?.amount ?? 0;
-      const spent = round2(spendByCategory.get(categoryId) ?? 0);
+      const spend = spendByCategory.get(categoryId);
+      const spent = round2(spend?.total ?? 0);
 
       rows.push({
         categoryId,
@@ -91,6 +97,7 @@ export class BudgetsService {
         // Infinity (or NaN at zero spend) and break the progress bar's width.
         utilization: budgeted > 0 ? round2(spent / budgeted) : 0,
         currency,
+        unconvertedCount: spend?.unconverted ?? 0,
       });
     }
 

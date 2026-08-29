@@ -33,7 +33,7 @@ declarations (see "Why pnpm changes things" below).
 
 ```bash
 pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
-pnpm run dev           # builds shared, then backend (:3000) + frontend (:4200) together
+pnpm run dev           # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
@@ -49,8 +49,12 @@ pnpm --filter backend run test:e2e
 
 # frontend: MUST go through ng test, which is the @angular/build:unit-test builder
 pnpm --filter frontend run test
-pnpm --filter frontend exec ng test --no-watch --test-name-pattern "ToolRegistry"
+pnpm --filter frontend exec ng test --no-watch --filter "ToolRegistry"
 ```
+
+The name filter is `--filter` (a regex over suite and test names). It is **not**
+`--test-name-pattern` — that is vitest's own flag, and the Angular builder rejects
+it outright with `Unknown argument`.
 
 `frontend`'s `test` script already carries `--no-watch`, deliberately: npm swallows a
 bare `--` while pnpm forwards it to Angular as an empty argument, which the builder
@@ -175,6 +179,16 @@ working — do not "simplify" them away.
 `fromOrigins`/`exposedTo` with `NotSupportedError`, so the polyfill is a same-origin
 fallback only.
 
+**Cross-origin also requires an actual second origin.** The partner page lives in
+`frontend/public/partner-demo/`, so it is *also* served by the app itself — and from
+there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which is
+exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
+dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
+`/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
+third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
+by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
+app's own origin, `/agent` says so instead of showing an empty list.
+
 ## Module map
 
 **backend/** — `auth/` (argon2id + JWT, rotating refresh, guards), `expenses/`
@@ -199,11 +213,21 @@ request; the access token deliberately carries no role claim.
   translation itself — never pre-convert with `toFunctionDeclarations()`, or the
   schema lands under `parameters` where the second pass cannot see it and every
   tool reaches the model with no arguments.**
-- `webmcp/` — `ToolRegistry` and `ToolSession` (state gating).
+- `webmcp/` — `ToolRegistry` and `ToolSession` (state gating), plus
+  `ToolCallAudit`, which POSTs every invocation to `/api/tool-calls`.
+  `ToolRegistry.observe()` is the single seam every invocation passes through;
+  `App` subscribes once and fans out to the audit write and the
+  pending-approval re-poll. Keep HTTP and session dependencies out of the
+  registry itself — that is what keeps its spec free of fakes.
 - `tools/` — the five tool `execute()` implementations over `/api/*`.
 - `copilot/` — `Copilot` (the agent loop) and `CopilotPanel` (orb + panel).
 - `core/api/` — `ApiClient`. `core/theme/` — `ThemeService`.
-- `pages/add-expense/` — the declarative WebMCP form.
+- `pages/add-expense/` — the declarative WebMCP form. It is the only tool call a
+  *human* can make, so it logs itself with the actor `agentInvoked` reports;
+  everything else through the registry is an agent.
+- `pages/agent/` — `/agent`, the WebMCP surface made visible: browser support,
+  the cross-origin partner iframe and what it exposed, and the live invocation
+  log. The only consumer of `discoveredTools()` and `invocationLog()`.
 
 ## Thought signatures (Gemini 3 function calling)
 
@@ -245,6 +269,28 @@ It uses a `DEAD` status for code that exists and passes tests but has **no
 caller**, so it does nothing in the running app. Three headline features are in
 that state today; `DEAD` is separated from `PARTIAL` precisely because it looks
 finished in both the source and the test count.
+
+## Money: never add two currencies
+
+There is no FX pass. `expenses.service.ts` writes `converted_amount` **only**
+when the expense is already in the org's base currency, so it is `null` for
+every foreign row — and the seed data has INR, USD and EUR.
+
+So a row counts toward a total only when it has a base-currency value, and the
+ones that do not are **counted and stated**, never dropped and never added:
+
+- Frontend: `core/expense/amount.ts` — `isConverted()`, `sumSpend()` (returns
+  `{total, excluded}`), `expenseCurrency()` for the label on a single row, and
+  `excludedNotice()` for the copy. Every rollup goes through `sumSpend`.
+- Backend: `sumByCategory()` sums only non-null `converted_amount` and returns
+  `unconverted`; that reaches the client as `BudgetStatus.unconvertedCount`, and
+  the `get_budget_status` tool passes it to the model so the Copilot can qualify
+  the figure rather than state a partial total as a complete one.
+
+The earlier code fell back to the raw `amount`, on the reasoning that a slightly
+wrong number beat a bar reading zero. It was not slightly wrong: a $200 charge
+was counted as ₹200. When a real FX pass starts filling `converted_amount`,
+those rows re-enter every total with no code change.
 
 ## Architectural rules that must not be violated
 

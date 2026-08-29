@@ -74,4 +74,17 @@ export class EnvService {
   get baseCurrency(): string {
     return this.optional('BASE_CURRENCY') ?? 'INR';
   }
+
+  /**
+   * Where the WebMCP partner-demo page is served from (PRD §7 cross-origin row).
+   *
+   * It has to be a *different* origin than the app or the demo proves nothing:
+   * `getTools({fromOrigins})` would return same-origin tools and the Copilot
+   * would filter every one of them out. Locally that is the static server on
+   * :4201 (`pnpm run dev:partner`); on a deploy it is whatever host the page
+   * ends up on, which is why this is configuration and not a constant.
+   */
+  get partnerOrigin(): string {
+    return this.optional('PARTNER_DEMO_ORIGIN') ?? 'http://localhost:4201';
+  }
 }

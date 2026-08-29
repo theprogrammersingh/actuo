@@ -9,20 +9,27 @@
  */
 
 import type { Expense } from '@actuo/shared';
-import { expenseAmount, isSpend } from '../../core/expense/amount.js';
+import {
+  expenseAmount,
+  isConverted,
+  isSpend,
+  sumSpend,
+  type SpendTotal,
+} from '../../core/expense/amount.js';
 
 /** ---------------------------------------------------------------- amounts */
 
 /*
- * `expenseAmount` and `isSpend` live in core/expense because dashboard,
- * expenses and budgets all total money and must agree on which amount field
- * wins and which rows count. Two copies of those rules would let the screens
+ * These live in core/expense because dashboard, expenses and budgets all total
+ * money and must agree on which amount field wins, which rows count, and which
+ * rows cannot be added at all. Two copies of those rules would let the screens
  * quietly contradict each other about how much was spent.
  *
  * Re-exported here so this module stays the single import site for dashboard
  * arithmetic.
  */
-export { expenseAmount, isSpend };
+export { expenseAmount, isConverted, isSpend, sumSpend };
+export type { SpendTotal };
 
 /** ------------------------------------------------------------------ dates */
 
@@ -77,15 +84,16 @@ export function spendWindow(today: Date): SpendWindow {
 
 /** --------------------------------------------------------------- rollups */
 
-/** Total spend for one `YYYY-MM`, counting only rows that qualify as spend. */
-export function totalForMonth(expenses: readonly Expense[], month: string): number {
-  return expenses.reduce(
-    (sum, expense) =>
-      isSpend(expense) && monthKey(expense.expenseDate) === month
-        ? sum + expenseAmount(expense)
-        : sum,
-    0,
-  );
+/**
+ * Total spend for one `YYYY-MM`.
+ *
+ * Returns `{total, excluded}` rather than a bare number so a caller cannot
+ * present the figure without knowing whether anything was left out of it —
+ * see `sumSpend`. Foreign-currency rows have no base-currency value yet and
+ * are counted, not added.
+ */
+export function totalForMonth(expenses: readonly Expense[], month: string): SpendTotal {
+  return sumSpend(expenses.filter((expense) => monthKey(expense.expenseDate) === month));
 }
 
 /** Expenses waiting on a human decision — the "pending approvals" tile. */
@@ -189,7 +197,9 @@ export function dailyTrend(
 
   const totals = new Map<string, number>();
   for (const expense of expenses) {
-    if (!isSpend(expense)) continue;
+    // Same rule as every other rollup: a row with no base-currency value is
+    // a different unit, and adding it would make the bar heights meaningless.
+    if (!isSpend(expense) || !isConverted(expense)) continue;
     const key = expense.expenseDate.slice(0, 10);
     totals.set(key, (totals.get(key) ?? 0) + expenseAmount(expense));
   }

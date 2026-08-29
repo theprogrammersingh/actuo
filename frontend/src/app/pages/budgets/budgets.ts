@@ -12,6 +12,7 @@ import type { BudgetStatus } from '@actuo/shared';
 import { ApiClient } from '../../core/api/api-client.js';
 import { Badge, Card, EmptyState, ErrorState, ProgressBar, Skeleton } from '../../ui';
 import { formatMoney } from '../../core/format/money.js';
+import { excludedNotice } from '../../core/expense/amount.js';
 import {
   isOverBudget,
   overBudget,
@@ -88,6 +89,14 @@ import {
           />
 
           <p class="mt-2 text-xs text-muted">{{ totalsHint() }}</p>
+
+          <!--
+            Muted, not status.danger: this says what the figure could not
+            account for, which is information rather than a state to act on.
+          -->
+          @if (excludedNote(); as note) {
+            <p class="mt-2 text-xs text-muted" role="status">{{ note }}</p>
+          }
         </ui-card>
 
         <h2 class="mt-6 mb-3 text-sm font-semibold text-body">By category</h2>
@@ -150,6 +159,15 @@ export class Budgets {
   readonly over = computed(() => overBudget(this.budgets()));
 
   private readonly rollup = computed(() => rollupBudgets(this.budgets()));
+
+  /**
+   * `spent` counts only expenses that have a value in the org's base currency
+   * (PRD §6.5 — there is no FX pass). Saying so keeps a partial figure from
+   * reading as a complete one.
+   */
+  protected readonly excludedNote = computed(() =>
+    excludedNotice(this.rollup().unconvertedCount),
+  );
 
   // --- copy ----------------------------------------------------------------
 

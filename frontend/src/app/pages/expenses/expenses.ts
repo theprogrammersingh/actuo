@@ -14,7 +14,7 @@ import type { Expense, Page } from '@actuo/shared';
 import { ApiClient } from '../../core/api/api-client.js';
 import { Badge, Button, EmptyState, ErrorState, Input, Skeleton } from '../../ui';
 import { formatDate, formatMoney } from '../../core/format/money.js';
-import { expenseAmount } from '../../core/expense/amount.js';
+import { expenseAmount, expenseCurrency } from '../../core/expense/amount.js';
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
@@ -394,8 +394,15 @@ export class Expenses {
     this.status.set(DEFAULT_FILTER.status);
   }
 
+  /**
+   * Printed in the currency the value is actually in.
+   *
+   * This used to reach for `baseCurrency` first, which meant an expense filed
+   * in USD — with no converted amount, because there is no FX pass yet
+   * (PRD §6.5) — rendered its raw dollar figure under the org's ₹ symbol.
+   */
   protected amountText(expense: Expense): string {
-    return formatMoney(expenseAmount(expense), expense.baseCurrency || expense.currency);
+    return formatMoney(expenseAmount(expense), expenseCurrency(expense));
   }
 
   reload(): void {

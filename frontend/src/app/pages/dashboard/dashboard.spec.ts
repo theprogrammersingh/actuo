@@ -42,6 +42,7 @@ const BUDGETS: BudgetStatus[] = [
     remaining: 7000,
     utilization: 0.3,
     currency: 'INR',
+    unconvertedCount: 0,
   },
 ];
 
@@ -198,6 +199,70 @@ describe('Dashboard', () => {
 
     it('marks every money figure as tabular so columns align (§2.3)', () => {
       expect(findAll('[data-money]').length).toBeGreaterThan(0);
+    });
+  });
+
+  /**
+   * Every tile here is a sum, and there is no FX pass (PRD §6.5). The old code
+   * reduced over `expenseAmount`, which falls back to the raw filed amount — so
+   * a $200 dinner was added to a rupee total as 200 and the figure was wrong
+   * with nothing on screen saying so. The seed data has INR, USD and EUR.
+   */
+  describe('mixed currencies', () => {
+    const MIXED = [
+      expense({ id: 'inr', expenseDate: '2026-08-02', amount: 1000, currency: 'INR' }),
+      expense({
+        id: 'usd',
+        expenseDate: '2026-08-03',
+        amount: 200,
+        currency: 'USD',
+        convertedAmount: null,
+      }),
+      expense({
+        id: 'eur',
+        expenseDate: '2026-08-04',
+        amount: 150,
+        currency: 'EUR',
+        convertedAmount: null,
+      }),
+    ];
+
+    it('totals only the base-currency rows', async () => {
+      api.get.mockImplementation(respond({ expenses: MIXED }));
+      await create();
+      await settle();
+
+      const tile = findAll('ui-stat-card').find((card) =>
+        card.textContent?.includes('This month'),
+      );
+      // 1000, not 1350: the foreign rows are a different unit.
+      expect(tile?.textContent).toContain('1,000');
+      expect(tile?.textContent).not.toContain('1,350');
+    });
+
+    it('says how many expenses it could not account for', async () => {
+      api.get.mockImplementation(respond({ expenses: MIXED }));
+      await create();
+      await settle();
+
+      expect(text()).toContain('2 expenses in other currencies');
+    });
+
+    it('says nothing when every row is in the base currency', async () => {
+      api.get.mockImplementation(respond());
+      await create();
+      await settle();
+
+      expect(text()).not.toContain('in other currencies');
+    });
+
+    it('prints an unconverted row under its own currency in the activity feed', async () => {
+      api.get.mockImplementation(respond({ expenses: MIXED }));
+      await create();
+      await settle();
+
+      // Not "₹200" — that would be a different number by a factor of ~90.
+      expect(text()).toMatch(/\$\s?200/);
     });
   });
 

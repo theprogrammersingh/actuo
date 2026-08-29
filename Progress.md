@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 49 backend unit · 34 backend e2e · 602 frontend
+**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 53 backend unit · 34 backend e2e · 676 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -146,18 +146,27 @@ their own expense.
 
 | Item | Phase | Status | Notes |
 |---|---|---|---|
-| Original + converted amounts stored | 1 | ✅ | Columns exist; `core/expense/amount.ts` prefers `convertedAmount` |
+| Original + converted amounts stored | 1 | ✅ | Columns exist. `core/expense/amount.ts` owns the rule: `sumSpend()` adds only base-currency rows and reports the rest |
 | Live FX + daily cache | 1 | ⬜ | No FX client, no cache, no rates table |
 | Historical rate lock | 1 | ⬜ | No rate column |
 
-> **⚠️ Correctness bug, not just a gap.** `convertedAmount` is set only when the
-> currency already equals the base currency, otherwise `null`, and the repository
-> falls back to the raw `amount` when summing. **Budget and dashboard totals
-> therefore add USD and EUR to INR as if they were the same unit.** The seed data
-> contains all three. This understates or overstates real spend today.
+> **Totals are now honest about what they exclude.** `convertedAmount` is still
+> only set when the currency already equals the base currency, so foreign rows
+> have no base-currency value. They used to be added at face value — a $200
+> charge counted as ₹200. Now a row counts only when it has a converted value,
+> and the ones that do not are **counted and stated**: `sumSpend()` returns
+> `{total, excluded}`, `sumByCategory()` returns `unconverted`, and that surfaces
+> as `BudgetStatus.unconvertedCount`, a muted line on the dashboard and budgets
+> screens, and a field in the `get_budget_status` tool result so the Copilot can
+> qualify the figure. Row labels follow the same rule — an unconverted $50 prints
+> as `$50`, not `₹50`.
+>
+> This is the honest interim, not the feature: real FX (live rates, daily cache,
+> historical lock) is still ⬜, and the moment `converted_amount` starts being
+> filled, those rows re-enter every total with no code change.
 
 **Verify:** file expenses in two currencies and confirm the dashboard total is
-not a naive sum.
+not a naive sum, and that it says how many rows it left out.
 
 ## §6.6 Analytics — 🟡
 
@@ -179,6 +188,8 @@ transport. **Phase 2.**
 
 ## §6.8 Copilot — 🟡 (strongest area)
 
+Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Phase 3) is left.
+
 | Item | Phase | Status | Notes |
 |---|---|---|---|
 | Floating widget, orb → panel | 0 | ✅ | Full-screen sheet on mobile |
@@ -188,7 +199,7 @@ transport. **Phase 2.**
 | Confirmation before mutating tools | 0 | ✅ | In-chat card. PRD says "native dialog"; in-chat was chosen deliberately |
 | Key-setup flow when no key | 0 | ✅ | Opens into setup rather than failing silently |
 | Embeddable via one `<script>` | 3 | ⬜ | It is an Angular component inside the app shell |
-| **Cross-origin tool use** | 0 | 💀 | `invokeCrossOrigin` and the partner page both work and are tested, but **`discoverRemoteTools()` has no caller** — unreachable from the UI. §11 calls this "the most impressive part" |
+| **Cross-origin tool use** | 0 | ✅ | `/agent` embeds the partner page from `PARTNER_DEMO_ORIGIN` (:4201, `scripts/partner-server.mjs`) with `allow="tools"` and calls `discoverRemoteTools()`. Verified in Chrome 151 with the flag: both partner tools discovered, `executeTool()` returned a price cross-origin |
 
 ## §6.9 Admin & Settings — 🟡
 
@@ -199,7 +210,7 @@ transport. **Phase 2.**
 | Org settings | 2 | 🟡 | Displays name and currency; no edit route |
 | Category management | 2 | 🟡 | Read-only list; no create/rename/delete |
 | Approval rules | 2 | ⬜ | — |
-| **Audit log viewer** | 2 | 💀 | The viewer renders `GET /tool-calls` with a human/agent filter — but **nothing writes to `tool_call_log`.** `appendQuietly` has no callers, so it shows seed rows forever |
+| **Audit log viewer** | 2 | ✅ | `ToolCallAudit` POSTs every invocation. Verified live: a Copilot-path tool call appears under Agent, an Add Expense submit under Human |
 
 ## §7 WebMCP Coverage Map — the learning checklist
 
@@ -208,12 +219,12 @@ transport. **Phase 2.**
 | Declarative API (annotated form) | ✅ | Add Expense: `toolname`/`tooldescription`/`toolparamdescription`/`toolautosubmit`, `agentInvoked` + `respondWith`, **no JS registration** |
 | Imperative `registerTool` | ✅ | Five tools, per-tool `AbortController` lifetime |
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
-| **Dynamic / state-gated tools** | 💀 | `ToolSession` is correct and has 7 passing tests, but the gate reads `Session.pendingApprovals()` and **`refreshPendingApprovals()` is never called** — it stays 0, so `approve_expense` never registers in the running app |
+| **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
-| Cross-origin tools | 💀 | See §6.8 — mechanism tested, never wired up |
-| Security annotations | 🟡 | `readOnlyHint` on all five. **`untrustedContentHint` is declared and used on zero tools** |
-| `getTools()` discovery | 🟡 | Implemented and tested, but used only on the (dead) cross-origin path — the Copilot reads its own registry |
-| `executeTool()` + manual debug panel | 🟡 | `executeTool()` done. **No debug panel** — `invocationLog` and `discoveredTools` have no consumer |
+| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier setup unprovable |
+| Security annotations | 🟡 | `readOnlyHint` on all five, and it now drives the mutating/read-only split in the shell's re-poll and the `/agent` panel. **`untrustedContentHint` is declared and used on zero tools** |
+| `getTools()` discovery | ✅ | Drives the cross-origin path and the `/agent` panel; re-runs on `toolchange`. The Copilot still reads its own registry for local tools, deliberately — see "the tool registry decision" |
+| `executeTool()` + manual debug panel | 🟡 | `executeTool()` done, and `/agent` renders `discoveredTools` and `invocationLog`. Still read-only: there is no form to invoke a tool by hand with arbitrary arguments |
 
 > Open question: `generate_report` is annotated `readOnlyHint: true` but creates a
 > server-side job. Defensible, but decide it deliberately.
@@ -263,26 +274,40 @@ mobile-first layouts, ≥44px touch targets. **Phase 0** — it is a stated PRD 
 
 ---
 
-## The five things worth fixing first
+## What to fix next
 
-Ranked by demo impact per unit of work. Each is small; each currently makes a
-headline feature look broken or absent.
+Three of the five entries that were here are done as of 2026-08-29 — the two
+state-gated / audit-log wiring fixes and the cross-origin demo — and the
+mixed-currency totals no longer lie. What is left, ranked by demo impact:
 
-1. **Call `refreshPendingApprovals()`** — one call site revives the state-gated
-   `approve_expense` tool, a §7 row and a scripted demo beat.
-   *Verify:* sign in as owner with a submitted expense pending → `approve_expense`
-   appears in the DevTools WebMCP panel → approve → the tool disappears.
-2. **Write to `tool_call_log`** — one call in `ToolRegistry.log()` makes the audit
-   viewer and the "everything the agent did" narrative real.
-   *Verify:* run a Copilot tool, then see the row appear under Settings → filtered
-   to `agent`.
-3. **Call `discoverRemoteTools()`** — unlocks the cross-origin demo.
-   *Verify:* open the partner page in flag-enabled Chrome, ask the Copilot for a
-   book price, confirm the card shows the `via …` origin badge.
-4. **Fix FX, or stop summing mixed currencies** — today the totals are wrong. Even
-   refusing to sum unconverted rows and saying so beats a confident wrong number.
-   *Verify:* two currencies on the dashboard; total is not a naive sum.
-5. **Build the deploy path** — `server.mjs` mounting Nest under `/api` with the
-   Angular SSR handler as fallback. §12's first checkbox depends on it.
+1. **Build the deploy path** — `server.mjs` mounting Nest under `/api` with the
+   Angular SSR handler as fallback, plus `apphosting.yaml` / `firebase.json`.
+   §12's first checkbox depends on it, and `backend/src/bootstrap.ts` already
+   describes a `server.mjs` that does not exist.
    *Verify:* `node server.mjs` from the repo root serves `/` as HTML and
-   `/api/<unknown>` as JSON 404.
+   `/api/<unknown>` as JSON 404. Remember to set `PARTNER_DEMO_ORIGIN` for the
+   deployed environment, or `/agent` will correctly report that it has no
+   second origin to talk to.
+2. **Real FX** — live rates, a daily cache, and a historical lock at write time.
+   Totals are honest about the gap now, but they still exclude real spend.
+   *Verify:* file in two currencies; both land in the total, and
+   `unconvertedCount` is 0.
+3. **README + demo video** — the other two §12 checkboxes. `llms.txt` and this
+   file are good source material.
+4. **Expense actions in the UI** — the Expenses page is still read-only. A human
+   cannot approve anything without the Copilot, which makes the approval
+   workflow look like an agent-only feature.
+5. **PWA** — `@angular/pwa` is still not installed, and it is a stated Phase 0
+   goal (§8.4).
+
+### Known rough edges, deliberately not fixed here
+
+- **Hard-navigating to any gated route 302s to `/login`,** which then bounces to
+  `/dashboard`. `app.routes.server.ts` prerenders `**`, so `authGuard` runs
+  server-side with no session. Pre-existing and it affects every gated route,
+  not just `/agent`; the §8.5 row already tracks it.
+- **`/agent` is a sixth tab on mobile.** The labels fit (widest is "Dashboard"
+  at ~54px in a 65px slot at 390px, measured), but it is tight, and the layout
+  was verified by measurement rather than at an actual 390px viewport.
+- **No CSP header is set anywhere yet.** When one lands it will need `frame-src`
+  for the partner origin, or the cross-origin demo breaks silently.

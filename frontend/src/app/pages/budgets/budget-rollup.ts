@@ -65,6 +65,12 @@ export interface BudgetRollup {
   /** Total overshoot across the categories that are over. */
   overspend: number;
   currency: string;
+  /**
+   * Expenses in the window that no figure above accounts for, because they are
+   * in another currency and no converted value exists yet (PRD §6.5). Summed
+   * across categories, so it is the count for the whole screen.
+   */
+  unconvertedCount: number;
 }
 
 const EMPTY: BudgetRollup = {
@@ -76,6 +82,7 @@ const EMPTY: BudgetRollup = {
   overCount: 0,
   overspend: 0,
   currency: '',
+  unconvertedCount: 0,
 };
 
 /**
@@ -104,5 +111,6 @@ export function rollupBudgets(statuses: readonly BudgetStatus[]): BudgetRollup {
     overspend: over.reduce((sum, status) => sum + overspend(status), 0),
     // Every category in one org shares the base currency; the first is enough.
     currency: statuses[0].currency,
+    unconvertedCount: statuses.reduce((sum, status) => sum + (status.unconvertedCount ?? 0), 0),
   };
 }

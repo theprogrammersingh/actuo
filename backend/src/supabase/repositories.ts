@@ -69,7 +69,15 @@ export interface OrgMember {
 
 export interface CategorySpendRow {
   categoryId: string | null;
+  /** Sum of rows that have a value in the org's base currency. */
   total: number;
+  /**
+   * Rows skipped because they are in another currency and `converted_amount`
+   * is null. Carried up to `BudgetStatus.unconvertedCount` so the figure can
+   * say what it left out instead of adding foreign amounts as if they were
+   * base-currency ones.
+   */
+  unconverted: number;
 }
 
 export interface ExpenseQuery {
