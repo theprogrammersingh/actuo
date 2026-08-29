@@ -67,7 +67,7 @@ env:
   # Verify after a deploy: the HTML for `/` must contain `ng-server-context`.
   # If it does not, this value is wrong and the site is rendering client-side.
   - variable: NG_ALLOWED_HOSTS
-    value: "*.web.app,*.run.app,*.firebaseapp.com,*.programmersingh.dev"
+    value: "*.hosted.app,*.run.app,*.web.app,*.firebaseapp.com,*.programmersingh.dev"
     availability: [RUNTIME]
 
   # The Supabase project URL is not a credential; the service-role key below is.
@@ -101,10 +101,21 @@ env:
   # from and the value has to be present while the build runs.
   #
   # Unset, every URL stays root-relative — valid, but the sitemap is not
-  # spec-compliant and scrapers may not resolve og:image. Set it to the
-  # backend's real hostname.
+  # spec-compliant and scrapers may not resolve og:image.
+  #
+  # This is an ORIGIN, so it must carry the scheme. stamp-seo.mjs substitutes the
+  # value verbatim (it only trims trailing slashes), so a bare hostname yields
+  # `<loc>actuo.programmersingh.dev/</loc>` — not a URL, and `new URL()` rejects
+  # it. Nothing fails the build; the sitemap is just quietly invalid.
+  #
+  # PREREQUISITE: this domain must actually resolve and be attached to the
+  # backend. It was NXDOMAIN when this value was set, and a canonical pointing at
+  # a host that does not resolve is worse than a relative one — it tells crawlers
+  # the real URL is dead. Add it as a custom domain on the App Hosting backend,
+  # point DNS at it, then confirm with `host actuo.programmersingh.dev`. Until
+  # that is done the deploy is fine and only the SEO metadata is wrong.
   - variable: PUBLIC_ORIGIN
-    value: "actuo.programmersingh.dev"
+    value: "https://actuo.programmersingh.dev"
     availability: [BUILD]
 
   # --- Optional, with sane defaults in EnvService --------------------------
