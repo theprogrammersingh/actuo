@@ -8,6 +8,16 @@
 # subdirectory; `rootDir: "/"` in firebase.json keeps pnpm-workspace.yaml and
 # pnpm-lock.yaml at the root of the build workspace, where the installer looks.
 
+# The pnpm version is pinned EXACTLY in package.json `engines.pnpm`, not as a
+# range. The App Hosting Node buildpack resolves `engines.pnpm` against the npm
+# registry and takes the highest match — it ignores `packageManager` — so the
+# old `">=10"` silently selected pnpm 12. Its own >= 11 branch is broken: it
+# downloads the standalone GitHub tarball and then launches it as
+# `node <layer>/bin/dist/pnpm.mjs`, a path that only exists in the npm package
+# layout, and the build dies with MODULE_NOT_FOUND before installing anything.
+# Keep `engines.pnpm` an exact 10.x that matches `packageManager`; bumping it
+# past 11 re-breaks the deploy while local and CI stay green.
+
 runConfig:
   cpu: 1
   memoryMiB: 1024
@@ -29,9 +39,17 @@ env:
   # Marks this as the deployed environment. EnvService reads it to decide that
   # PARTNER_DEMO_ORIGIN has no localhost default here — otherwise /agent would
   # embed an iframe pointing at each visitor's own machine.
+  #
+  # RUNTIME only, and that is load-bearing. `EnvService.partnerOrigin` is the
+  # only reader in the repo and it runs per request; nothing in the build looks
+  # at NODE_ENV (Angular takes `production` from angular.json, not the env). But
+  # the buildpack installs with `pnpm install --prod` under NODE_ENV=production,
+  # which drops every devDependency — and the whole build is devDependencies:
+  # the Angular CLI, the Nest CLI, typescript. Granting this BUILD availability
+  # produces a build that cannot find `ng`.
   - variable: NODE_ENV
     value: production
-    availability: [BUILD, RUNTIME]
+    availability: [RUNTIME]
 
   # Angular 21 refuses to server-render a request whose Host header is not on an
   # allowlist (SSRF protection). Off the allowlist it does NOT fail loudly — it

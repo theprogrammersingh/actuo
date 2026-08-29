@@ -5,7 +5,7 @@
   "description": "AI-native expense intelligence platform with a universal WebMCP Copilot",
   "engines": {
     "node": ">=22",
-    "pnpm": ">=10"
+    "pnpm": "10.14.0"
   },
   "scripts": {
     "dev": "pnpm run build:shared && concurrently -n backend,frontend,partner -c blue,magenta,yellow \"pnpm run dev:backend\" \"pnpm run dev:frontend\" \"pnpm run dev:partner\"",
