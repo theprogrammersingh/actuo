@@ -159,11 +159,21 @@ describe('Agent tools page', () => {
       expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
     });
 
-    it('survives a backend with no partner origin configured', async () => {
+    /**
+     * The deployed default: `PARTNER_DEMO_ORIGIN` is unset in production, on
+     * purpose, because a localhost fallback there would embed an iframe
+     * pointing at each visitor's own machine. An empty card would read as a
+     * bug, so the page has to say what is missing.
+     */
+    it('explains itself when no partner origin is configured', async () => {
       await create(null);
 
       expect(iframe()).toBeNull();
-      expect(text()).toContain('Agent tools');
+      expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
+      expect(text()).toContain('No second origin is configured');
+      // Still points at what does exist, and at how to get the real demo.
+      expect(host().querySelector('a[href="/partner-demo/"]')).not.toBeNull();
+      expect(text()).toContain('PARTNER_DEMO_ORIGIN');
     });
 
     /**

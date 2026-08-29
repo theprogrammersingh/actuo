@@ -127,7 +127,30 @@ interface AgentConfig {
           </div>
         </header>
 
-        @if (sameOrigin()) {
+        @if (!partnerOrigin()) {
+          <!--
+            The deployed default. Rather than an empty card, say what is missing
+            and what the page still offers: the partner demo itself works from
+            this origin, it just cannot prove anything about *cross*-origin.
+          -->
+          <p class="text-sm text-muted">
+            No second origin is configured, so there is nothing cross-origin to discover. The
+            partner page itself is still here —
+            <a
+              href="/partner-demo/"
+              class="underline decoration-line underline-offset-2 hover:text-body"
+              target="_blank"
+              rel="noreferrer"
+              >open it on this origin</a
+            >
+            — but its tools come back same-origin, which is the set the Copilot filters out.
+          </p>
+          <p class="mt-2 text-sm text-muted">
+            To run the real demo, point <code class="font-mono">PARTNER_DEMO_ORIGIN</code> at a
+            host that is not this one. Locally that is
+            <code class="font-mono">pnpm run dev:partner</code> on :4201.
+          </p>
+        } @else if (sameOrigin()) {
           <!--
             Worth saying plainly rather than showing a confident empty list: with
             the partner page on this origin its tools come back marked
@@ -238,7 +261,8 @@ export class Agent {
   protected readonly registry = inject(ToolRegistry);
   private readonly destroyRef = inject(DestroyRef);
 
-  private readonly partnerOrigin = signal<string | null>(null);
+  /** `null` until `/api/config` answers; `''` there means no second origin. */
+  protected readonly partnerOrigin = signal<string | null>(null);
 
   protected readonly remoteTools = this.copilot.crossOriginTools;
   protected readonly registeredNames = computed(() => this.registry.registeredNames().join(', '));

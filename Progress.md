@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 53 backend unit · 34 backend e2e · 676 frontend
+**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 60 backend unit · 34 backend e2e · 676 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -247,7 +247,7 @@ mobile-first layouts, ≥44px touch targets. **Phase 0** — it is a stated PRD 
 | Structured data | ✅ | Real `application/ld+json` `SoftwareApplication` |
 | llms.txt | ✅ | Accurate tool inventory and permission model |
 | OG / Twitter | 🟡 | No `og:image`, no `og:url` — and `twitter:card` is `summary_large_image` with no image |
-| SSR on public pages | 🟡 | `app.routes.server.ts` prerenders `**` — including authenticated routes |
+| SSR on public pages | 🟡 | `app.routes.server.ts` prerenders `**` — including authenticated routes, which land on the app shell and hydrate client-side (correct for a gated view, accidental rather than chosen). **Was silently broken until 2026-08-29:** Angular 21's `Host` allowlist rejected every request and fell back to CSR, discarding the SSR entirely. Fixed via `security.allowedHosts` + `NG_ALLOWED_HOSTS`; the check is that `/` contains `ng-server-context` |
 | noindex on gated views | 🟡 | robots.txt covers crawlers, but `landing.ts` sets `robots: index, follow` **globally**, and in an SPA that tag persists into `/dashboard` |
 
 ## §9 Non-functional
@@ -262,13 +262,14 @@ mobile-first layouts, ≥44px touch targets. **Phase 0** — it is a stated PRD 
 | Unit tests for tool `execute()` | ✅ | — |
 | Structured logging / error tracking | ⬜ | Nest logger only; no Sentry-tier reporting |
 | **CI** | ⬜ | No `.github/workflows` at all, contrary to §8.1 |
+| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts` |
 
 ## §12 Submission criteria — ⬜
 
 | Item | Status | Notes |
 |---|---|---|
-| **Public deployed URL** | ⬜ | No `firebase.json`, no `apphosting.yaml`. `frontend/src/server.ts` is the stock scaffold with the API mount still commented out, and the `server.mjs` that `bootstrap.ts` describes **does not exist** — the combined single-process deploy is unbuilt |
-| README | ⬜ | Both workspace READMEs are untouched boilerplate. `llms.txt` is good source material |
+| **Public deployed URL** | 🟡 | The deploy path is **built and verified locally**: `server.mjs` composes Nest under `/api` with the Angular SSR handler, `apphosting.yaml` and `firebase.json` are committed with build/run commands stated outright. What is left is running it — creating the backend and the three secrets needs an interactive Google login |
+| README | ✅ | Root `README.md`: what is WebMCP-specific and where, the flag setup, what works without it, and the deploy steps. Workspace READMEs are still starter boilerplate |
 | Demo video | ⬜ | — |
 | Source with clear tool definitions | ✅ | `shared/src/tools.ts` |
 
@@ -276,24 +277,24 @@ mobile-first layouts, ≥44px touch targets. **Phase 0** — it is a stated PRD 
 
 ## What to fix next
 
-Three of the five entries that were here are done as of 2026-08-29 — the two
-state-gated / audit-log wiring fixes and the cross-origin demo — and the
-mixed-currency totals no longer lie. What is left, ranked by demo impact:
+The deploy path landed on 2026-08-29 and is verified locally; the three DEAD
+WebMCP features and the mixed-currency totals were fixed earlier the same day.
+What is left, ranked by demo impact:
 
-1. **Build the deploy path** — `server.mjs` mounting Nest under `/api` with the
-   Angular SSR handler as fallback, plus `apphosting.yaml` / `firebase.json`.
-   §12's first checkbox depends on it, and `backend/src/bootstrap.ts` already
-   describes a `server.mjs` that does not exist.
-   *Verify:* `node server.mjs` from the repo root serves `/` as HTML and
-   `/api/<unknown>` as JSON 404. Remember to set `PARTNER_DEMO_ORIGIN` for the
-   deployed environment, or `/agent` will correctly report that it has no
-   second origin to talk to.
-2. **Real FX** — live rates, a daily cache, and a historical lock at write time.
+1. **Run the deploy.** Everything is committed; the remaining steps need an
+   interactive Google login, so they are a human's to run — see the Deploying
+   section of `README.md`. Set `SUPABASE_URL` in `apphosting.yaml` to your own
+   project first.
+   *Verify:* `/api/health` returns JSON on the public URL, `/` returns HTML
+   containing `ng-server-context` (if it does not, `NG_ALLOWED_HOSTS` is wrong
+   and the site is rendering client-side), and signing in works end to end.
+2. **Demo video** — the last §12 checkbox. The script is the "What to look at"
+   list in `README.md`: state-gated tool appearing and disappearing, a
+   cross-origin call, a cancelled report, the audit log split by actor.
+3. **Real FX** — live rates, a daily cache, a historical lock at write time.
    Totals are honest about the gap now, but they still exclude real spend.
-   *Verify:* file in two currencies; both land in the total, and
+   *Verify:* file in two currencies; both land in the total and
    `unconvertedCount` is 0.
-3. **README + demo video** — the other two §12 checkboxes. `llms.txt` and this
-   file are good source material.
 4. **Expense actions in the UI** — the Expenses page is still read-only. A human
    cannot approve anything without the Copilot, which makes the approval
    workflow look like an agent-only feature.
@@ -302,10 +303,18 @@ mixed-currency totals no longer lie. What is left, ranked by demo impact:
 
 ### Known rough edges, deliberately not fixed here
 
-- **Hard-navigating to any gated route 302s to `/login`,** which then bounces to
-  `/dashboard`. `app.routes.server.ts` prerenders `**`, so `authGuard` runs
-  server-side with no session. Pre-existing and it affects every gated route,
-  not just `/agent`; the §8.5 row already tracks it.
+- **The cross-origin demo cannot work on the deployed URL as configured.** The
+  partner page ships inside the app, so on a deploy it is same-origin, and
+  `/agent` says so rather than showing an empty list. Hosting
+  `frontend/public/partner-demo/` somewhere else and setting
+  `PARTNER_DEMO_ORIGIN` is a small follow-up, deliberately deferred.
+- **Firebase App Hosting has an open issue with pnpm workspaces**
+  ([firebase-tools#7478](https://github.com/firebase/firebase-tools/issues/7478),
+  `lockfile not found`) that reproduces when the app is in a *subdirectory*.
+  `rootDir: "/"` keeps the lockfile where the installer looks, which is the
+  arrangement least likely to hit it — but it is untested against the real
+  builder. If it fails, nothing needs rewriting: `node server.mjs` runs on Cloud
+  Run, Render or Fly unchanged.
 - **`/agent` is a sixth tab on mobile.** The labels fit (widest is "Dashboard"
   at ~54px in a 65px slot at 390px, measured), but it is tight, and the layout
   was verified by measurement rather than at an actual 390px viewport.

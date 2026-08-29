@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Scaffold, backend, design system, BYOK Gemini layer, WebMCP tool layer and the
-Copilot are all built and committed. Remaining: app shell + routing wiring,
-Firebase App Hosting deploy, and the README/demo script.
+Scaffold, backend, design system, BYOK Gemini layer, WebMCP tool layer, the
+Copilot, the app shell and the single-process deploy path are all built and
+committed. Remaining: running the actual Firebase deploy, and the demo video.
 
 Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 
@@ -85,7 +85,8 @@ and `pnpm run build` handle the ordering.
 
 `frontend/` and `backend/` are separate codebases (own package.json, tsconfig, tests)
 that ship as **one** Firebase App Hosting deploy: a single Node process routes
-`/api/*` to Nest and everything else to Angular's SSR handler.
+`/api/*` to Nest and everything else to Angular's SSR handler. That process is
+`server.mjs` at the repo root — see "The deploy" below.
 
 ## Why pnpm changes things
 
@@ -188,6 +189,38 @@ dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
 third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
 by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
 app's own origin, `/agent` says so instead of showing an empty list.
+
+## The deploy
+
+`server.mjs` at the repo root is the production entry point: `pnpm start`, and
+what `apphosting.yaml`'s `runCommand` names. It imports the two build outputs and
+composes them in one process.
+
+- It appends the Angular handler to **Nest's own Express instance**, after Nest's
+  routes. That works only because `setGlobalPrefix('/api')` scopes Nest's
+  not-found router to `/api` instead of installing a global catch-all — the
+  property `backend/test/routing-contract.e2e-spec.ts` exists to pin. If that
+  spec breaks, the deploy is broken too, in a way that returns the app shell for
+  a bad API call.
+- The built Angular SSR bundle is **self-contained** (only `node:` imports;
+  Express is bundled in) and serves `dist/browser` itself. So the repo root needs
+  no runtime dependency, and `node_modules` there stays at two dev packages.
+- `createNodeRequestHandler` returns its argument unchanged, so the exported
+  `reqHandler` *is* the Express app and mounts directly as middleware.
+
+**`NG_ALLOWED_HOSTS` is load-bearing, and it fails silently.** Angular 21 checks
+the `Host` header against an allowlist (SSRF protection). Off the list it does not
+error — it falls back to **client-side rendering**, quietly discarding the SSR and
+structured-data work in PRD §8.5. The env var *replaces* the build-time list in
+`angular.json` (`getAllowedHostsFromEnv() ?? options.allowedHosts`), so a deploy
+must list every hostname it answers on. The port is stripped before matching, and
+`*.example.com` wildcards work. Verify with: the HTML for `/` contains
+`ng-server-context`. `angular.json` carries `localhost` so `node server.mjs`
+renders locally.
+
+**`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.partnerOrigin`
+drops its `http://localhost:4201` default, because serving that from a deployed
+instance makes `/agent` embed an iframe pointing at each visitor's own machine.
 
 ## Module map
 
