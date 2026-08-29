@@ -10,6 +10,31 @@
       content="Actuo is an expense management platform where every action is also a WebMCP tool, so an AI agent can operate it with full transparency."
     />
     <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <link rel="canonical" href="__PUBLIC_ORIGIN__/" />
+
+    <!--
+      PWA (PRD §8.4). The manifest and the maskable icon are what make the app
+      installable; `apple-touch-icon` is the iOS equivalent, which reads no
+      manifest at all.
+    -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Actuo" />
+
+    <!--
+      Open Graph and Twitter (PRD §8.5). `__PUBLIC_ORIGIN__` is replaced at build
+      time by scripts/stamp-seo.mjs — the public pages are prerendered, so there
+      is no request to derive an origin from, and most scrapers will not resolve
+      a relative og:image. Unset, these stay root-relative rather than wrong.
+    -->
+    <meta property="og:site_name" content="Actuo" />
+    <meta property="og:url" content="__PUBLIC_ORIGIN__/" />
+    <meta property="og:image" content="__PUBLIC_ORIGIN__/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Actuo — expense management an AI agent can operate" />
+    <meta name="twitter:image" content="__PUBLIC_ORIGIN__/og.png" />
 
     <!--
       Design Doc §2.3 asks for a geometric display face with character (it names

@@ -27,6 +27,8 @@ export type CopilotEntry =
       durationMs?: number;
       origin?: string;
       mutates: boolean;
+      /** From the contract's `untrustedContentHint` — see ToolAnnotations. */
+      untrusted: boolean;
       cancellable: boolean;
     };
 
@@ -206,6 +208,10 @@ export class Copilot {
     const contract = this.registry.getContract(call.name);
     const remote = this.remoteTools().find((tool) => tool.name === call.name);
     const mutates = contract ? contract.annotations.readOnlyHint !== true : false;
+    const untrusted = contract
+      ? contract.annotations.untrustedContentHint === true
+      // A cross-origin tool's result is another site's text by definition.
+      : remote !== undefined;
     const entryId = id();
 
     this.push({
@@ -216,6 +222,7 @@ export class Copilot {
       state: 'running',
       input: call.args,
       mutates,
+      untrusted,
       cancellable: call.name === 'generate_report',
       origin: remote ? hostOf(remote.origin) : undefined,
     });

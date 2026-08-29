@@ -12,4 +12,4 @@ Disallow: /login
 Disallow: /signup
 Disallow: /api/
 
-Sitemap: /sitemap.xml
+Sitemap: __PUBLIC_ORIGIN__/sitemap.xml

@@ -6,11 +6,13 @@ import {
   computed,
   inject,
   resource,
+  signal,
 } from '@angular/core';
-import type { BudgetStatus } from '@actuo/shared';
+import type { Budget, BudgetStatus, Category } from '@actuo/shared';
 
-import { ApiClient } from '../../core/api/api-client.js';
-import { Badge, Card, EmptyState, ErrorState, ProgressBar, Skeleton } from '../../ui';
+import { ApiClient, ApiError } from '../../core/api/api-client.js';
+import { Session } from '../../core/session/session.js';
+import { Badge, Button, Card, EmptyState, ErrorState, Input, ProgressBar, Skeleton } from '../../ui';
 import { formatMoney } from '../../core/format/money.js';
 import { excludedNotice } from '../../core/expense/amount.js';
 import {
@@ -35,7 +37,7 @@ import {
 @Component({
   selector: 'app-budgets',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Badge, Card, EmptyState, ErrorState, ProgressBar, Skeleton],
+  imports: [Badge, Button, Card, EmptyState, ErrorState, Input, ProgressBar, Skeleton],
   host: { class: 'block' },
   template: `
     <section class="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
@@ -125,12 +127,193 @@ import {
           }
         </ul>
       }
+
+      <!--
+        PRD §6.3. POST /api/budgets existed with no caller at all, which made the
+        empty state's advice to "add the first one" impossible to follow. Shown
+        only to owner/admin, matching the route's own Roles list — a member sees
+        the page without a control that would 403.
+      -->
+      @if (mayManage()) {
+        <ui-card padding="lg" class="mt-6 block">
+          <header uiCardHeader class="mb-4">
+            <h2 class="font-display text-lg font-semibold text-body">Set a budget</h2>
+            <p class="mt-1 text-sm text-muted">
+              A monthly amount for one category, or for the organization as a whole. Each can
+              have one budget, so only the categories without one are listed.
+            </p>
+          </header>
+
+          @if (unbudgeted().length === 0 && orgBudgetExists()) {
+            <p class="text-sm text-muted">
+              Every category already has a budget. Changing one is not supported yet — the API
+              creates budgets and does not replace them.
+            </p>
+          } @else {
+          <form class="grid gap-4 sm:grid-cols-[1fr_auto_auto] sm:items-end" (submit)="saveBudget($event)">
+            <div>
+              <label for="budget-category" class="mb-1.5 block text-sm font-medium text-body">
+                Category
+              </label>
+              <select
+                id="budget-category"
+                name="categoryId"
+                class="block min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2
+                       text-sm text-body transition-colors duration-150 ease-out
+                       focus-visible:outline-2 focus-visible:-outline-offset-1
+                       focus-visible:outline-brand-teal"
+                [value]="newCategoryId()"
+                (change)="newCategoryId.set($any($event.target).value)"
+              >
+                @if (!orgBudgetExists()) {
+                  <option value="">All categories</option>
+                }
+                @for (category of unbudgeted(); track category.id) {
+                  <option [value]="category.id">{{ category.name }}</option>
+                }
+              </select>
+            </div>
+
+            <div class="sm:w-40">
+              <ui-input
+                label="Monthly amount"
+                type="number"
+                inputmode="decimal"
+                placeholder="10000"
+                [error]="amountError()"
+                [value]="newAmount()"
+                (valueChange)="newAmount.set($event)"
+              />
+            </div>
+
+            <button uiButton type="submit" [loading]="saving()" [disabled]="!newAmount().trim()">
+              Save budget
+            </button>
+          </form>
+
+          <label class="mt-3 flex items-center gap-2 text-sm text-muted">
+            <input
+              type="checkbox"
+              class="size-4 rounded border-line accent-brand-teal"
+              [checked]="newRollover()"
+              (change)="newRollover.set($any($event.target).checked)"
+            />
+            <span>Roll unspent budget into next month</span>
+          </label>
+
+          @if (formMessage(); as message) {
+            <p
+              class="mt-3 text-sm"
+              [class.text-status-danger]="formFailed()"
+              [class.text-status-success]="!formFailed()"
+              role="status"
+            >
+              {{ message }}
+            </p>
+          }
+          }
+        </ui-card>
+      }
     </section>
   `,
 })
 export class Budgets {
   private readonly api = inject(ApiClient);
+  private readonly session = inject(Session);
   private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+
+  // --- setting a budget (PRD §6.3) -----------------------------------------
+
+  /**
+   * Mirrors `@Roles('owner','admin')` on `POST /api/budgets`. The server is the
+   * enforcer; hiding the form just avoids offering a control that would 403.
+   */
+  protected readonly mayManage = computed(() => {
+    const role = this.session.role();
+    return role === 'owner' || role === 'admin';
+  });
+
+  protected readonly categories = signal<readonly Category[]>([]);
+  /** Existing budget rows, so the form cannot offer a category that would 409. */
+  private readonly existing = signal<readonly Budget[]>([]);
+
+  /**
+   * `POST /api/budgets` inserts; a unique index on (org_id, category_id) makes a
+   * second one a 409. So the dropdown lists only what can actually be created —
+   * the same principle as the expense action buttons.
+   */
+  protected readonly unbudgeted = computed(() => {
+    const taken = new Set(this.existing().map((budget) => budget.categoryId));
+    return this.categories().filter((category) => !taken.has(category.id));
+  });
+
+  protected readonly orgBudgetExists = computed(() =>
+    this.existing().some((budget) => budget.categoryId === null),
+  );
+  protected readonly newCategoryId = signal('');
+  protected readonly newAmount = signal('');
+  protected readonly newRollover = signal(false);
+  protected readonly saving = signal(false);
+  protected readonly formMessage = signal<string | null>(null);
+  protected readonly formFailed = signal(false);
+  protected readonly amountError = signal<string | null>(null);
+
+  constructor() {
+    // Categories only matter to someone who can set a budget, and only in the
+    // browser — `ApiClient` refuses to run during SSR.
+    if (this.isBrowser) void this.loadCategories();
+  }
+
+  private async loadCategories(): Promise<void> {
+    try {
+      const [categories, budgets] = await Promise.all([
+        this.api.get<Category[]>('/orgs/current/categories'),
+        this.api.get<Budget[]>('/budgets'),
+      ]);
+      this.categories.set(categories);
+      this.existing.set(budgets);
+    } catch {
+      // The form still works against "All categories", which is the org-wide
+      // budget. A missing list is a smaller problem than a blocked form.
+    }
+  }
+
+  protected async saveBudget(event: Event): Promise<void> {
+    event.preventDefault();
+    this.formMessage.set(null);
+    this.amountError.set(null);
+
+    const amount = Number(this.newAmount());
+    if (!Number.isFinite(amount) || amount <= 0) {
+      this.amountError.set('Enter an amount greater than zero.');
+      return;
+    }
+
+    this.saving.set(true);
+    try {
+      await this.api.post<Budget>('/budgets', {
+        // '' is the org-wide budget, which the DTO expects as null rather than
+        // an empty string.
+        categoryId: this.newCategoryId() || null,
+        amount: Math.round(amount * 100) / 100,
+        period: 'monthly',
+        rollover: this.newRollover(),
+      });
+      this.formFailed.set(false);
+      this.formMessage.set('Budget saved.');
+      this.newAmount.set('');
+      this.newCategoryId.set('');
+      // The bars are server-computed, so the figures have to come back from it,
+      // and the dropdown has to drop the category that now has one.
+      this.data.reload();
+      void this.loadCategories();
+    } catch (error) {
+      this.formFailed.set(true);
+      this.formMessage.set(describeBudgetFailure(error));
+    } finally {
+      this.saving.set(false);
+    }
+  }
 
   /**
    * `undefined` params park the resource in `idle` on the server: `ApiClient`
@@ -246,4 +429,17 @@ export class Budgets {
   reload(): void {
     this.data.reload();
   }
+}
+
+/** Actionable, never blaming (Design Doc §3.6). */
+function describeBudgetFailure(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403) return 'Only an owner or admin can set a budget.';
+    if (error.status === 409) {
+      return 'That category already has a budget. Changing an existing one is not supported yet.';
+    }
+    if (error.status === 0) return 'Actuo didn’t respond, so nothing was saved. Try again.';
+    if (error.message) return error.message;
+  }
+  return 'That budget could not be saved. Nothing was changed.';
 }

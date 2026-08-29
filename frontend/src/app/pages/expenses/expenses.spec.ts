@@ -1,9 +1,11 @@
 import { EXPENSE_PAGE_MAX } from '@actuo/shared';
 import type { Expense, Page } from '@actuo/shared';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiClient } from '../../core/api/api-client.js';
+import { ApiClient, ApiError } from '../../core/api/api-client.js';
+import { Session } from '../../core/session/session.js';
 import { Expenses } from './expenses.js';
 
 function expense(overrides: Partial<Expense> = {}): Expense {
@@ -461,5 +463,219 @@ describe('Expenses paging', () => {
     for (const [, params] of api.get.mock.calls) {
       expect((params as { limit: number }).limit).toBeLessThanOrEqual(EXPENSE_PAGE_MAX);
     }
+  });
+});
+
+/**
+ * PRD §6.2 / §6.4 — the workflow controls. Until these landed the Expenses page
+ * was read-only, so the approval flow looked like something only the Copilot
+ * could drive.
+ *
+ * These assert the *offer*, not the enforcement: the server re-checks role,
+ * legality and ownership on every call (see the RBAC e2e suite). What is tested
+ * here is that a button which would 403 is never rendered.
+ */
+describe('Expenses workflow actions', () => {
+  const ME = 'user-me';
+  const OTHER = 'user-other';
+
+  let api: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
+  let session: {
+    role: ReturnType<typeof signal<string | null>>;
+    user: ReturnType<typeof signal<{ id: string } | null>>;
+    refreshPendingApprovals: ReturnType<typeof vi.fn>;
+  };
+  let fixture: ComponentFixture<Expenses>;
+
+  const host = () => fixture.nativeElement as HTMLElement;
+  const text = () => host().textContent ?? '';
+  const tableRows = () => Array.from(host().querySelectorAll('tbody tr'));
+
+  /** Buttons in a row's action cell, by visible label. */
+  function actionsOn(index = 0): string[] {
+    const cell = tableRows()[index]?.querySelector('td:last-child');
+    return Array.from(cell?.querySelectorAll('button') ?? []).map(
+      (b) => (b.textContent ?? '').trim(),
+    );
+  }
+
+  function click(label: string, index = 0): void {
+    const cell = tableRows()[index]?.querySelector('td:last-child');
+    const button = Array.from(cell?.querySelectorAll('button') ?? []).find(
+      (b) => (b.textContent ?? '').trim() === label,
+    ) as HTMLButtonElement | undefined;
+    if (!button) throw new Error(`no "${label}" button; found: ${actionsOn(index).join(', ')}`);
+    button.click();
+    fixture.detectChanges();
+  }
+
+  async function create(rows: Expense[], role: string | null = 'owner'): Promise<void> {
+    api.get.mockResolvedValue(page(rows));
+    session.role.set(role);
+    fixture = TestBed.createComponent(Expenses);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  beforeEach(() => {
+    api = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation(async () => expense({ id: 'a', status: 'approved' })),
+      delete: vi.fn().mockResolvedValue(null),
+    };
+    session = {
+      role: signal<string | null>('owner'),
+      user: signal<{ id: string } | null>({ id: ME }),
+      refreshPendingApprovals: vi.fn().mockResolvedValue(0),
+    };
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiClient, useValue: api },
+        { provide: Session, useValue: session },
+      ],
+    });
+  });
+
+  describe('what is offered', () => {
+    it('offers approve and reject on a submitted row to an owner', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      expect(actionsOn()).toEqual(['Approve', 'Reject']);
+    });
+
+    it('offers nothing on that row to a member', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })], 'member');
+      expect(actionsOn()).toEqual([]);
+    });
+
+    it('offers submit and delete on your own draft', async () => {
+      await create([expense({ id: 'a', status: 'draft', userId: ME })], 'member');
+      expect(actionsOn()).toEqual(['Submit', 'Delete']);
+    });
+
+    it('lets an approver submit someone else’s draft, matching the server', async () => {
+      await create([expense({ id: 'a', status: 'draft', userId: OTHER })]);
+      expect(actionsOn()).toEqual(['Submit']);
+    });
+
+    /**
+     * Segregation of duties. The server refuses a self-decision, so a button
+     * here would be one that always 403s.
+     */
+    it('never offers approve or reject on your own submitted row', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: ME })]);
+      expect(actionsOn()).toEqual([]);
+    });
+
+    it('offers nothing on a reimbursed row — it is terminal', async () => {
+      await create([expense({ id: 'a', status: 'reimbursed', userId: ME })]);
+      expect(actionsOn()).toEqual([]);
+    });
+  });
+
+  describe('running an action', () => {
+    it('asks for an optional note before a decision, rather than firing immediately', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+
+      click('Approve');
+
+      expect(api.post).not.toHaveBeenCalled();
+      expect(text()).toContain('Add a note (optional)');
+    });
+
+    it('posts the decision with the note to the action route', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      click('Approve');
+
+      const textarea = host().querySelector('textarea') as HTMLTextAreaElement;
+      textarea.value = 'Receipts check out.';
+      textarea.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      click('Approve');
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(api.post).toHaveBeenCalledWith('/expenses/a/approve', {
+        comment: 'Receipts check out.',
+      });
+    });
+
+    it('runs a no-comment action straight away', async () => {
+      await create([expense({ id: 'a', status: 'draft', userId: ME })], 'member');
+
+      click('Submit');
+      await fixture.whenStable();
+
+      expect(api.post).toHaveBeenCalledWith('/expenses/a/submit', {});
+    });
+
+    /**
+     * The row is patched in place. Reloading would discard every `Load more`
+     * page and the scroll position after acting on one row of forty.
+     */
+    it('updates the row from the response without refetching the page', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      const fetchesBefore = api.get.mock.calls.length;
+
+      click('Approve');
+      click('Approve');
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(text()).toContain('Approved');
+      expect(api.get.mock.calls).toHaveLength(fetchesBefore);
+    });
+
+    /** A decision changes the queue that gates the `approve_expense` tool. */
+    it('re-checks the pending approval queue afterwards', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      click('Approve');
+      click('Approve');
+      await fixture.whenStable();
+
+      expect(session.refreshPendingApprovals).toHaveBeenCalled();
+    });
+
+    it('explains a 409 as someone else having moved it first', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      api.post.mockRejectedValue(new ApiError('Conflict', 409, null));
+
+      click('Approve');
+      click('Approve');
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(text()).toContain('Someone else changed this expense first');
+    });
+  });
+
+  describe('deleting', () => {
+    it('arms before it deletes, so one stray click cannot remove a row', async () => {
+      await create([expense({ id: 'a', status: 'draft', userId: ME })], 'member');
+
+      click('Delete');
+      expect(api.delete).not.toHaveBeenCalled();
+      expect(actionsOn()).toContain('Confirm delete');
+
+      click('Confirm delete');
+      await fixture.whenStable();
+      expect(api.delete).toHaveBeenCalledWith('/expenses/a');
+    });
+
+    it('drops the row from the table once deleted', async () => {
+      await create([
+        expense({ id: 'a', merchant: 'Barista', status: 'draft', userId: ME }),
+        expense({ id: 'b', merchant: 'Uber', status: 'draft', userId: ME }),
+      ], 'member');
+
+      click('Delete');
+      click('Confirm delete');
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(tableRows()).toHaveLength(1);
+      expect(text()).not.toContain('Barista');
+    });
   });
 });

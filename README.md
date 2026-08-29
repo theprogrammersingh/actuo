@@ -27,7 +27,7 @@ a concrete implementation:
 | **Dynamic / state-gated tools** — `approve_expense` registers only while you can actually approve something, and fires `toolchange` as that changes | `frontend/src/app/webmcp/tool-session.ts` |
 | **Cancellation** — `generate_report` honours `AbortSignal`; the server abandons the job mid-flight, not just the client | `frontend/src/app/tools/expense-tools.ts`, `backend/src/reports/` |
 | **Cross-origin tools** — the Copilot discovers and calls tools published by an unrelated site | `frontend/src/app/pages/agent/agent.ts`, `frontend/public/partner-demo/` |
-| **Security annotations** — `readOnlyHint` on reads; mutating tools require in-chat confirmation before they run | `shared/src/tools.ts`, `frontend/src/app/copilot/copilot.ts` |
+| **Security annotations** — `readOnlyHint` on reads; `untrustedContentHint` where a result carries text a person wrote; mutating tools require in-chat confirmation before they run | `shared/src/tools.ts`, `frontend/src/app/copilot/copilot.ts` |
 
 ### The tools
 
@@ -109,7 +109,16 @@ live log of every tool call.
   costs; the tool card carries a `via localhost:4201` badge.
 - **Cancellation.** Ask for a report, then press **Stop**. The UI reacts
   immediately and the server abandons the job.
-- **Audit trail.** Settings → Audit log, filtered to Agent, then Human.
+- **Audit trail.** Settings has two panels and they are not the same thing:
+  **Tool calls** is every WebMCP invocation (filter it to Agent, then Human);
+  **Change history** is every state change, including ones made by clicking.
+  Approve an expense from the Expenses page and it appears in the second, not
+  the first.
+- **Humans and agents share one permission model.** Sign in as `arjun` and the
+  approve controls are gone from the Expenses page — and `POST
+  /api/expenses/:id/approve` still returns 403 if you call it directly. Sign in
+  as `priya` and try to approve an expense she filed herself: no button, and the
+  API refuses that too.
 
 ---
 
@@ -124,7 +133,9 @@ docs/       PRD, design doc, init guide
 
 Two codebases, **one deployable**: `server.mjs` at the repository root runs a
 single Node process in which Nest owns `/api/*` and the Angular SSR handler takes
-everything else.
+everything else. It installs as a PWA — manifest, service worker, offline
+banner — and the worker deliberately caches **no** `/api` response, because
+stale money is worse than a spinner.
 
 Boundaries that are not negotiable (see `CLAUDE.md` for the full list): the
 frontend never talks to Supabase, the Gemini key never reaches our servers, and
@@ -133,8 +144,12 @@ roles are enforced server-side on every request.
 ```bash
 pnpm test          # shared + backend unit + frontend
 pnpm run test:e2e  # backend e2e — a separate config, not included above
-pnpm run build     # shared -> backend -> frontend, in that order
+pnpm run build     # shared -> backend -> frontend, then the SEO origin stamp
 ```
+
+`.github/workflows/ci.yml` runs exactly that gate on every push. It needs no
+secrets: `EnvService` raises on a missing variable at *call* time rather than
+import time, so the app boots and runs its e2e suite without credentials.
 
 ---
 
@@ -183,6 +198,19 @@ pnpm workspaces in a *subdirectory* ([firebase-tools#7478](https://github.com/fi
 `pnpm-workspace.yaml` and `pnpm-lock.yaml` where the installer looks. If the
 build fails there anyway, nothing needs rewriting: `node server.mjs` runs on
 Cloud Run, Render or Fly unchanged.
+
+### Set `PUBLIC_ORIGIN` too
+
+The public pages are prerendered, so absolute URLs — the sitemap's `<loc>`,
+`og:image`, `canonical` — have to be decided at build time. `index.html`,
+`sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that
+`scripts/stamp-seo.mjs` replaces as the last step of `pnpm run build`. Unset,
+everything stays root-relative and valid; set, it becomes absolute.
+
+```bash
+PUBLIC_ORIGIN=https://your-host pnpm run build
+grep -o '<loc>[^<]*</loc>' frontend/dist/frontend/browser/sitemap.xml
+```
 
 ### Allowed hosts — the one that fails silently
 

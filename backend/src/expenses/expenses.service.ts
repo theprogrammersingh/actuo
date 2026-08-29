@@ -21,15 +21,14 @@ import type { AuthenticatedUser } from '../auth/auth.types.js';
 import type { CreateExpenseDto, SearchExpensesQueryDto, UpdateExpenseDto } from './dto/expense.dto.js';
 import {
   OWNER_ONLY_ACTIONS,
+  isApprover,
+  mayPerformOn,
   assertTransition,
   roleMayPerform,
   targetStatusFor,
   type TransitionAction,
 } from './expense-state-machine.js';
 
-
-/** Roles that can see and act on the whole org's expenses. */
-const APPROVER_ROLES: readonly Role[] = ['owner', 'admin'];
 
 @Injectable()
 export class ExpensesService {
@@ -176,19 +175,19 @@ export class ExpensesService {
       );
     }
 
-    // Submit and rework are the actions a member performs, and only on their
-    // own expense. Approvers act on anyone's.
-    if (
-      OWNER_ONLY_ACTIONS.includes(action) &&
-      !this.isApprover(role) &&
-      expense.userId !== user.userId
-    ) {
-      throw new ForbiddenException(`You can only ${action} your own expenses.`);
-    }
-
-    // Self-approval is a segregation-of-duties hole: an admin could file and
-    // approve their own reimbursement with nobody else involved.
-    if ((action === 'approve' || action === 'reject') && expense.userId === user.userId) {
+    /*
+     * Role, ownership and segregation of duties in one place — `mayPerformOn`
+     * in `@actuo/shared` is the same function the Expenses page uses to decide
+     * which buttons exist. The messages stay here because only the server
+     * needs to explain a refusal; the UI simply does not offer the action.
+     */
+    if (!mayPerformOn(role, action, expense.userId, user.userId)) {
+      // Submit and rework are a member's own-row actions; approvers act on any.
+      if (OWNER_ONLY_ACTIONS.includes(action)) {
+        throw new ForbiddenException(`You can only ${action} your own expenses.`);
+      }
+      // Self-approval is a segregation-of-duties hole: an admin could file and
+      // approve their own reimbursement with nobody else involved.
       throw new ForbiddenException(
         'You cannot approve or reject your own expense. Ask another approver.',
       );
@@ -242,8 +241,9 @@ export class ExpensesService {
     return expense;
   }
 
+  /** Delegates to `@actuo/shared` so the UI and the server agree on the term. */
   private isApprover(role: Role | undefined): boolean {
-    return role !== undefined && APPROVER_ROLES.includes(role);
+    return isApprover(role);
   }
 
   private assertCanView(user: AuthenticatedUser, expense: Expense): void {

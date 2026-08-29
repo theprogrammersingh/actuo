@@ -151,6 +151,7 @@ import { Copilot } from './copilot';
                   [durationMs]="entry.durationMs"
                   [origin]="entry.origin"
                   [mutates]="entry.mutates"
+                  [untrusted]="entry.untrusted"
                   [cancellable]="entry.cancellable"
                   (confirm)="copilot.respondToConfirmation(true)"
                   (cancel)="onCancel(entry.state)"

@@ -119,8 +119,14 @@ export class Landing {
     this.meta.updateTag({ property: 'og:description', content: description });
     this.meta.updateTag({ property: 'og:type', content: 'website' });
     this.meta.updateTag({ name: 'twitter:card', content: 'summary_large_image' });
-    // The public page is the only indexable surface (PRD §8.5).
-    this.meta.updateTag({ name: 'robots', content: 'index, follow' });
+    this.meta.updateTag({ name: 'twitter:title', content: 'Actuo — AI-native expense intelligence' });
+    this.meta.updateTag({ name: 'twitter:description', content: description });
+    /*
+     * `robots` is deliberately NOT set here. A meta tag is document-global, so
+     * writing `index, follow` on load left it behind when the user navigated to
+     * an authenticated view. Indexability is declared per route in
+     * `app.routes.ts` and applied by `SeoService` on every navigation.
+     */
 
     this.addStructuredData();
   }

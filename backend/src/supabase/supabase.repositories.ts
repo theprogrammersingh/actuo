@@ -13,6 +13,7 @@ import type {
   ExpenseStatus,
   Membership,
   Organization,
+  AuditLogEntry,
   Page,
   Role,
   ToolCallLogEntry,
@@ -28,6 +29,7 @@ import type {
   CreateExpenseInput,
   ExpenseQuery,
   ExpenseRepository,
+  ListAuditQuery,
   OrgMember,
   OrgRepository,
   RefreshTokenRecord,
@@ -563,5 +565,26 @@ export class SupabaseAuditLogRepository implements AuditLogRepository {
         metadata: entry.metadata ?? {},
       });
     if (error) fail(error, 'Audit log write');
+  }
+
+  async list(orgId: string, query: ListAuditQuery): Promise<Page<AuditLogEntry>> {
+    let q = this.supabase
+      .getClient()
+      .from('audit_log')
+      .select('*', { count: 'exact' })
+      .eq('org_id', orgId);
+    if (query.entity) q = q.eq('entity', query.entity);
+
+    // Matches `audit_log_org_created_idx` (org_id, created_at desc).
+    const { data, error, count } = await q
+      .order('created_at', { ascending: false })
+      .range(query.offset, query.offset + query.limit - 1);
+    if (error) fail(error, 'Audit log read');
+    return {
+      items: (data ?? []).map(map.toAuditLogEntry),
+      total: count ?? 0,
+      limit: query.limit,
+      offset: query.offset,
+    };
   }
 }

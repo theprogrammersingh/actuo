@@ -1,52 +1,68 @@
 import type { Routes } from '@angular/router';
 import { authGuard, guestGuard } from './core/session/auth-guard.js';
+import { INDEXABLE, NOT_INDEXABLE } from './core/seo/seo-service.js';
 
 /**
  * Every authenticated view is lazily loaded, so the public landing page ships
  * the smallest possible bundle. PRD §8.5 wants the public surface fast and
  * crawlable while the gated app is deliberately not indexed.
+ *
+ * `data.robots` is what `SeoService` applies to the `robots` meta tag on every
+ * navigation. It is declared per route rather than set by a component because a
+ * meta tag is document-global: a component that writes one on load leaves it
+ * behind when the user navigates away, which is exactly how `index, follow`
+ * used to end up on `/dashboard`. A route with no `robots` is treated as
+ * `noindex` — the safe direction to be wrong in.
  */
 export const routes: Routes = [
   {
     path: '',
     loadComponent: () => import('./pages/landing/landing.js').then((m) => m.Landing),
     title: 'Actuo — AI-native expense intelligence',
+    // The only indexable surface in the app.
+    data: { robots: INDEXABLE },
   },
   {
     path: 'login',
     canActivate: [guestGuard],
     loadComponent: () => import('./pages/auth/login.js').then((m) => m.Login),
     title: 'Sign in · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     path: 'signup',
     canActivate: [guestGuard],
     loadComponent: () => import('./pages/auth/signup.js').then((m) => m.Signup),
     title: 'Create an account · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     path: 'dashboard',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/dashboard/dashboard.js').then((m) => m.Dashboard),
     title: 'Dashboard · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     path: 'expenses',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/expenses/expenses.js').then((m) => m.Expenses),
     title: 'Expenses · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     path: 'add',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/add-expense/add-expense.js').then((m) => m.AddExpense),
     title: 'Add expense · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     path: 'budgets',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/budgets/budgets.js').then((m) => m.Budgets),
     title: 'Budgets · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     // The WebMCP surface, made visible: what this page publishes, what it can
@@ -55,12 +71,14 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/agent/agent.js').then((m) => m.Agent),
     title: 'Agent tools · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     path: 'settings',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/settings/settings.js').then((m) => m.Settings),
     title: 'Settings · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   {
     // Design Doc §6 deliverable: every component in every state, for eyeballing
@@ -68,6 +86,7 @@ export const routes: Routes = [
     path: 'showcase',
     loadComponent: () => import('./ui/showcase/showcase.js').then((m) => m.Showcase),
     title: 'Component showcase · Actuo',
+    data: { robots: NOT_INDEXABLE },
   },
   { path: '**', redirectTo: '' },
 ];

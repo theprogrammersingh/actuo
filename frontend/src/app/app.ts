@@ -9,6 +9,8 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CopilotPanel } from './copilot/copilot-panel.js';
 import { Session } from './core/session/session.js';
 import { ThemeService } from './core/theme/theme-service.js';
+import { PwaService } from './core/pwa/pwa-service.js';
+import { SeoService } from './core/seo/seo-service.js';
 import { ToolCallAudit } from './webmcp/tool-call-audit.js';
 import { ToolRegistry } from './webmcp/tool-registry.js';
 import { ToolSession } from './webmcp/tool-session.js';
@@ -87,6 +89,51 @@ const NAV: NavItem[] = [
           </div>
         </nav>
 
+        <!--
+          PRD §8.4. Both are stated requirements and both are announced, because
+          losing your connection mid-approval is exactly the moment a silent
+          colour change is not enough.
+        -->
+        @if (pwa.isOffline()) {
+          <!--
+            Toned text on a surface, not a filled bar: status.warning is
+            #fbbf24 in dark and #b45309 in light, so a fill that reads well in
+            one theme fails contrast in the other. The border/text pattern is
+            the same one the over-budget banner uses.
+          -->
+          <div
+            class="sticky top-0 z-40 border-b border-status-warning/40 bg-surface px-4 py-2
+                   text-center text-sm font-medium text-status-warning sm:ml-56"
+            role="status"
+          >
+            You’re offline. Actuo is showing what it already loaded — nothing will save
+            until you’re back.
+          </div>
+        } @else if (pwa.canInstall()) {
+          <div
+            class="flex items-center gap-3 border-b border-line bg-surface px-4 py-2 text-sm
+                   sm:ml-56"
+            role="status"
+          >
+            <span class="flex-1 text-muted">Install Actuo for a full-screen app on this device.</span>
+            <button
+              type="button"
+              class="min-h-9 rounded-md bg-brand-teal px-3 text-sm font-medium text-ink-inverted"
+              (click)="install()"
+            >
+              Install
+            </button>
+            <button
+              type="button"
+              class="min-h-9 px-2 text-muted hover:text-body"
+              aria-label="Dismiss the install prompt"
+              (click)="pwa.dismiss()"
+            >
+              ✕
+            </button>
+          </div>
+        }
+
         <!-- pb-24 keeps content clear of the mobile tab bar and the safe area. -->
         <main class="pb-24 sm:ml-56 sm:pb-8">
           <router-outlet />
@@ -121,14 +168,24 @@ const NAV: NavItem[] = [
 export class App {
   protected readonly session = inject(Session);
   protected readonly theme = inject(ThemeService);
+  protected readonly pwa = inject(PwaService);
   private readonly tools = inject(ToolSession);
   private readonly registry = inject(ToolRegistry);
   private readonly audit = inject(ToolCallAudit);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly seo = inject(SeoService);
 
   protected readonly nav = NAV;
 
   constructor() {
+    /*
+     * Keep the `robots` meta tag in step with the route. It lives here because
+     * the tag is document-global: a component that sets it on load leaves it
+     * behind, which is how an authenticated view ended up advertising itself as
+     * indexable (PRD §8.5).
+     */
+    this.seo.start();
+
     // Publish tools once there is a session, and retire them on sign-out.
     effect(() => {
       if (this.session.isAuthenticated()) void this.tools.start();
@@ -184,6 +241,10 @@ export class App {
       }
     });
     this.destroyRef.onDestroy(stop);
+  }
+
+  protected async install(): Promise<void> {
+    await this.pwa.install();
   }
 
   protected async signOut(): Promise<void> {

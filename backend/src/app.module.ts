@@ -6,6 +6,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { HealthController } from './health/health.controller.js';
 import { ConfigController } from './config/config.controller.js';
+import { AuditModule } from './audit/audit.module.js';
 import { SupabaseModule } from './supabase/supabase.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
@@ -59,6 +60,7 @@ const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
     ExpensesModule,
     BudgetsModule,
     ToolCallsModule,
+    AuditModule,
     OrgsModule,
     ReportsModule,
   ],

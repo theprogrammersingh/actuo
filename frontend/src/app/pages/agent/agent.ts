@@ -193,6 +193,9 @@ interface AgentConfig {
                     [tone]="tool.annotations?.readOnlyHint ? 'neutral' : 'warning'"
                     [label]="tool.annotations?.readOnlyHint ? 'Read-only' : 'Mutating'"
                   />
+                  @if (tool.annotations?.untrustedContentHint) {
+                    <ui-badge tone="warning" label="Untrusted text" />
+                  }
                   <span class="font-mono text-sm text-body">{{ tool.name }}</span>
                   <span class="ml-auto text-xs text-muted">via {{ hostOf(tool.origin) }}</span>
                   <p class="w-full text-xs text-muted">{{ tool.description }}</p>

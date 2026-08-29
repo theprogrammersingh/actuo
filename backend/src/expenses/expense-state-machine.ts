@@ -1,5 +1,9 @@
 import { ConflictException } from '@nestjs/common';
-import { EXPENSE_TRANSITIONS, canTransition, type ExpenseStatus, type Role } from '@actuo/shared';
+import {
+  EXPENSE_TRANSITIONS,
+  canTransition,
+  type ExpenseStatus,
+} from '@actuo/shared';
 
 /**
  * The approval workflow, PRD §6.4:
@@ -7,55 +11,36 @@ import { EXPENSE_TRANSITIONS, canTransition, type ExpenseStatus, type Role } fro
  *   draft -> submitted -> approved -> reimbursed
  *                      \-> rejected -> draft
  *
- * The *legality* of a transition lives in `@actuo/shared` (`canTransition`,
- * `EXPENSE_TRANSITIONS`) so the UI can grey out impossible buttons using the
- * same table the server enforces. This file adds the two things the shared
- * table cannot express: which HTTP failure an illegal move produces, and *who*
- * is allowed to make each legal move.
+ * The *shape* of the workflow lives in `@actuo/shared` — which transitions are
+ * legal (`canTransition`, `EXPENSE_TRANSITIONS`), what each action is called and
+ * where it leads (`TRANSITION_ACTIONS`, `targetStatusFor`), who may perform it
+ * (`TRANSITION_ROLES`, `roleMayPerform`), and which actions are restricted to
+ * the row's own submitter (`OWNER_ONLY_ACTIONS`). All of it is shared because
+ * the UI has to offer exactly the actions the server will accept, and the
+ * frontend cannot import from `backend/`.
  *
- * The server is the only enforcer. The UI merely reflects it.
- */
-
-/** The user-facing action names, and the status each one moves an expense to. */
-export const TRANSITION_ACTIONS = {
-  submit: 'submitted',
-  approve: 'approved',
-  reject: 'rejected',
-  reimburse: 'reimbursed',
-  /** rejected -> draft: pull a rejected expense back for rework. */
-  rework: 'draft',
-} as const satisfies Record<string, ExpenseStatus>;
-
-export type TransitionAction = keyof typeof TRANSITION_ACTIONS;
-
-/**
- * Which roles may perform each transition.
+ * What is left here is the part that is genuinely server-only: which HTTP
+ * failure an illegal move produces. The server is the only enforcer; the UI
+ * merely reflects it.
  *
- * `submit` is open to `member` because submitting your own expense is the
- * whole point of the member role — ownership of the row is checked separately
- * in ExpensesService. Everything downstream of submission is an approver
- * action and excludes `member` (PRD §6.4). This is the table the RBAC e2e test
- * pins down.
+ * Re-exported below so existing importers of this module keep working and there
+ * is one obvious place to look from the backend side.
  */
-export const TRANSITION_ROLES: Record<TransitionAction, readonly Role[]> = {
-  submit: ['owner', 'admin', 'member'],
-  approve: ['owner', 'admin'],
-  reject: ['owner', 'admin'],
-  reimburse: ['owner', 'admin'],
-  rework: ['owner', 'admin', 'member'],
-};
-
-/**
- * Actions that only the expense's own submitter may perform (approvers may
- * perform them on anyone's). ExpensesService does the ownership check; this is
- * the list it consults.
- */
-export const OWNER_ONLY_ACTIONS: readonly TransitionAction[] = ['submit', 'rework'];
-
-/** Statuses with nowhere left to go. `reimbursed` is the only true terminal. */
-export const TERMINAL_STATUSES: readonly ExpenseStatus[] = (
-  Object.keys(EXPENSE_TRANSITIONS) as ExpenseStatus[]
-).filter((status) => EXPENSE_TRANSITIONS[status].length === 0);
+export {
+  APPROVER_ROLES,
+  EXPENSE_TRANSITIONS,
+  NOT_ON_OWN_ACTIONS,
+  OWNER_ONLY_ACTIONS,
+  TERMINAL_STATUSES,
+  TRANSITION_ACTIONS,
+  TRANSITION_ROLES,
+  canTransition,
+  isApprover,
+  mayPerformOn,
+  roleMayPerform,
+  targetStatusFor,
+} from '@actuo/shared';
+export type { TransitionAction } from '@actuo/shared';
 
 /**
  * 409 Conflict, not 400 Bad Request.
@@ -92,14 +77,4 @@ export function assertTransition(from: ExpenseStatus, to: ExpenseStatus): void {
   if (!canTransition(from, to)) {
     throw new IllegalTransitionException(from, to);
   }
-}
-
-/** The status an action targets, or undefined if the action is unknown. */
-export function targetStatusFor(action: TransitionAction): ExpenseStatus {
-  return TRANSITION_ACTIONS[action];
-}
-
-/** Whether `role` is permitted to perform `action` at all. */
-export function roleMayPerform(role: Role, action: TransitionAction): boolean {
-  return TRANSITION_ROLES[action].includes(role);
 }

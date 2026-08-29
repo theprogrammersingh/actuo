@@ -102,7 +102,9 @@
         genre: { type: 'string', enum: ['sci-fi', 'fantasy', 'fiction', 'memoir'] },
       },
     },
-    annotations: { readOnlyHint: true },
+    // Titles and authors are free text from another origin — untrusted by
+    // definition, which is exactly what the hint is for.
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute: async ({ query, genre }) => {
       log(`search_books(${JSON.stringify({ query, genre })})`);
       const q = (query || '').toLowerCase();
@@ -122,7 +124,9 @@
       properties: { id: { type: 'string', description: 'The book id, e.g. b1.' } },
       required: ['id'],
     },
-    annotations: { readOnlyHint: true },
+    // Titles and authors are free text from another origin — untrusted by
+    // definition, which is exactly what the hint is for.
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute: async ({ id }) => {
       log(`get_book_price(${JSON.stringify({ id })})`);
       const book = CATALOG.find((b) => b.id === id);

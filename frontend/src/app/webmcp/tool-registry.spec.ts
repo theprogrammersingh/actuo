@@ -45,7 +45,11 @@ describe('ToolRegistry', () => {
     const [descriptor] = context.registerTool.mock.calls[0];
     expect(descriptor.name).toBe('search_expenses');
     expect(descriptor.inputSchema).toEqual(SEARCH_EXPENSES.inputSchema);
-    expect(descriptor.annotations).toEqual({ readOnlyHint: true });
+    // Against the contract, not a literal: the annotations are the contract's to
+    // change (untrustedContentHint was added later), and this assertion is about
+    // them being published verbatim.
+    expect(descriptor.annotations).toEqual(SEARCH_EXPENSES.annotations);
+    expect(descriptor.annotations).toMatchObject({ readOnlyHint: true });
   });
 
   /**

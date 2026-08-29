@@ -13,7 +13,8 @@
     "dev:frontend": "pnpm --filter frontend run start",
     "dev:partner": "node scripts/partner-server.mjs",
     "build:shared": "pnpm --filter @actuo/shared run build",
-    "build": "pnpm run build:shared && pnpm --filter backend run build && pnpm --filter frontend run build",
+    "build": "pnpm run build:shared && pnpm --filter backend run build && pnpm --filter frontend run build && pnpm run build:seo",
+    "build:seo": "node scripts/stamp-seo.mjs",
     "start": "node server.mjs",
     "test": "pnpm --filter @actuo/shared run test && pnpm --filter backend run test && pnpm --filter frontend run test",
     "test:e2e": "pnpm --filter backend run test:e2e"

@@ -18,6 +18,7 @@ import type {
   Expense,
   Membership,
   Organization,
+  AuditLogEntry,
   ToolCallLogEntry,
 } from '@actuo/shared';
 import type { OrgMember, RefreshTokenRecord, UserRecord } from './repositories.js';
@@ -101,6 +102,19 @@ export const toToolCallLogEntry = (r: Row): ToolCallLogEntry => ({
   toolName: r.tool_name,
   input: r.input ?? null,
   output: r.output ?? null,
+  createdAt: r.created_at,
+});
+
+export const toAuditLogEntry = (r: Row): AuditLogEntry => ({
+  id: r.id,
+  orgId: r.org_id,
+  actorId: r.actor_id ?? null,
+  action: r.action,
+  entity: r.entity,
+  entityId: r.entity_id ?? null,
+  // The column is `not null default '{}'`, but a hand-written row could still
+  // hold null; the viewer renders this and must not have to guard it.
+  metadata: r.metadata ?? {},
   createdAt: r.created_at,
 });
 

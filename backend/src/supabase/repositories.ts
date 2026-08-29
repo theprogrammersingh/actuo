@@ -25,6 +25,7 @@ import type {
   Organization,
   Page,
   Role,
+  AuditLogEntry,
   ToolCallLogEntry,
 } from '@actuo/shared';
 
@@ -217,8 +218,17 @@ export interface RefreshTokenRepository {
   revokeAllForUser(userId: string): Promise<void>;
 }
 
+export interface ListAuditQuery {
+  /** Narrow to one kind of thing, e.g. `expense`. */
+  entity?: string;
+  limit: number;
+  offset: number;
+}
+
 export interface AuditLogRepository {
   append(entry: AuditEntry): Promise<void>;
+  /** Newest first, for GET /api/audit-log. Backed by `audit_log_org_created_idx`. */
+  list(orgId: string, query: ListAuditQuery): Promise<Page<AuditLogEntry>>;
 }
 
 // ---------------------------------------------------------------------------

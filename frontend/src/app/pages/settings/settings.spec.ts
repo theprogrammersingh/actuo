@@ -1,6 +1,12 @@
 import { PLATFORM_ID, computed, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import type { Category, Organization, Page, ToolCallLogEntry } from '@actuo/shared';
+import type {
+  AuditLogEntry,
+  Category,
+  Organization,
+  Page,
+  ToolCallLogEntry,
+} from '@actuo/shared';
 
 import { ModelCatalog, type GeminiModelOption } from '../../ai';
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
@@ -333,5 +339,111 @@ describe('Settings', () => {
     const server = TestBed.createComponent(Settings);
     expect(() => server.detectChanges()).not.toThrow();
     expect(api.gets).toEqual([]);
+  });
+});
+
+/**
+ * PRD §6.2. `audit_log` was written on every mutation and read by nothing, so
+ * "who changed what, when" was recorded and then invisible. It is a different
+ * table from `tool_call_log` — state changes rather than tool invocations — and
+ * the two panels say so, because two audit panels without an explanation read
+ * as a bug.
+ */
+describe('Settings — change history', () => {
+  const AUDIT: AuditLogEntry = {
+    id: 'audit-1',
+    orgId: 'org-1',
+    actorId: 'user-1',
+    action: 'expense.approved',
+    entity: 'expense',
+    entityId: 'exp-1',
+    metadata: { amount: 6450 },
+    createdAt: '2026-08-28T09:00:00.000Z',
+  };
+
+  let api: { get: ReturnType<typeof vi.fn> };
+  let session: { role: ReturnType<typeof signal<string | null>>; isBrowser: boolean };
+  let fixture: ComponentFixture<Settings>;
+
+  const text = () => (fixture.nativeElement as HTMLElement).textContent ?? '';
+  const paths = () => api.get.mock.calls.map((call) => call[0]);
+
+  async function create(role: string | null = 'owner'): Promise<void> {
+    session.role.set(role);
+    fixture = TestBed.createComponent(Settings);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  beforeEach(() => {
+    api = {
+      get: vi.fn().mockImplementation(async (path: string) => {
+        if (path === '/audit-log') return { items: [AUDIT], total: 1, limit: 25, offset: 0 };
+        if (path === '/tool-calls') return { items: [], total: 0, limit: 25, offset: 0 };
+        if (path === '/orgs/current') {
+          return { id: 'org-1', name: 'Acme', baseCurrency: 'INR', createdAt: '2026-01-01T00:00:00.000Z' };
+        }
+        return [];
+      }),
+    };
+    session = { role: signal<string | null>('owner'), isBrowser: true };
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiClient, useValue: api },
+        { provide: Session, useValue: session },
+      ],
+    });
+  });
+
+  it('shows what changed, not just which tools ran', async () => {
+    await create('owner');
+
+    expect(text()).toContain('Change history');
+    expect(text()).toContain('expense.approved');
+  });
+
+  /** Mirrors @Roles('owner','admin') on GET /api/audit-log. */
+  it('is hidden from a member, and not even requested', async () => {
+    await create('member');
+
+    expect(text()).not.toContain('Change history');
+    expect(paths()).not.toContain('/audit-log');
+  });
+
+  it('distinguishes the two panels in words', async () => {
+    await create('owner');
+
+    // Renaming the tool-call panel is half the fix: two things both called
+    // "Audit log" is what made them look like duplicates.
+    expect(text()).toContain('Tool calls');
+    expect(text()).toContain('Change history');
+  });
+
+  it('says so when there is nothing recorded yet', async () => {
+    api.get.mockImplementation(async (path: string) =>
+      path === '/audit-log'
+        ? { items: [], total: 0, limit: 25, offset: 0 }
+        : path === '/tool-calls'
+          ? { items: [], total: 0, limit: 25, offset: 0 }
+          : [],
+    );
+    await create('owner');
+
+    expect(text()).toContain('Nothing has changed yet');
+  });
+
+  /** One panel failing must not take the others down with it. */
+  it('reports its own failure without breaking the rest of the page', async () => {
+    api.get.mockImplementation(async (path: string) => {
+      if (path === '/audit-log') throw new ApiError('nope', 500, null);
+      if (path === '/tool-calls') return { items: [], total: 0, limit: 25, offset: 0 };
+      return [];
+    });
+    await create('owner');
+
+    expect(text()).toContain('The change history didn’t load');
+    expect(text()).toContain('Tool calls');
   });
 });

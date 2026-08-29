@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Scaffold, backend, design system, BYOK Gemini layer, WebMCP tool layer, the
-Copilot, the app shell and the single-process deploy path are all built and
-committed. Remaining: running the actual Firebase deploy, and the demo video.
+Every Phase 0 item is built and committed — scaffold, backend, design system,
+BYOK Gemini layer, WebMCP tool layer, Copilot, app shell, expense workflow UI,
+PWA, SEO, and the single-process deploy path. Remaining: running the actual
+Firebase deploy, and the demo video. Everything else in the PRD is Phase 1–3.
 
 Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 
@@ -218,9 +219,40 @@ must list every hostname it answers on. The port is stripped before matching, an
 `ng-server-context`. `angular.json` carries `localhost` so `node server.mjs`
 renders locally.
 
+**`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one.** The public pages
+are prerendered, so absolute URLs — `<loc>` in the sitemap, `og:image`,
+`canonical` — must be decided before the build finishes. `index.html`,
+`sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that survives
+prerendering into every generated file, and `scripts/stamp-seo.mjs` replaces it
+across `dist/frontend/browser` as the last step of `pnpm run build`. Unset, it
+substitutes `''` and everything stays root-relative and valid.
+
+**The service worker must never cache `/api`.** `ngsw-config.json` has no
+`dataGroups` at all, deliberately: a cached response would show stale money and
+would undercut the promise that every read goes through an authenticated route.
+`navigationUrls` also excludes `/partner-demo/**`, which is a separate site that
+re-registers WebMCP tools on each load.
+
 **`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.partnerOrigin`
 drops its `http://localhost:4201` default, because serving that from a deployed
 instance makes `/agent` embed an iframe pointing at each visitor's own machine.
+
+## The expense workflow is one table, shared
+
+Which action is legal, who may perform it, and on whose row — all of it lives in
+`shared/src/domain.ts` (`canTransition`, `TRANSITION_ROLES`,
+`OWNER_ONLY_ACTIONS`, `NOT_ON_OWN_ACTIONS`, `mayPerformOn`). `ExpensesService.transition`
+enforces it and `core/expense/expense-actions.ts` renders from it, so a button
+cannot appear for something the server would refuse.
+
+`backend/src/expenses/expense-state-machine.ts` keeps only what is genuinely
+server-side — the 409 mapping — and re-exports the rest.
+
+Two rules that look alike and are not: `OWNER_ONLY_ACTIONS` (submit, rework) is
+"only your own row, unless you are an approver"; `NOT_ON_OWN_ACTIONS` (approve,
+reject) is "never your own row, whoever you are" — segregation of duties.
+Getting them confused is how the UI briefly offered an Approve button that always
+403'd.
 
 ## Module map
 
@@ -246,6 +278,14 @@ request; the access token deliberately carries no role claim.
   translation itself — never pre-convert with `toFunctionDeclarations()`, or the
   schema lands under `parameters` where the second pass cannot see it and every
   tool reaches the model with no arguments.**
+- `core/seo/` — `SeoService` applies each route's `data.robots` on every
+  navigation. A meta tag is document-global, so a component that sets one on
+  load leaves it behind; that is how `index, follow` used to end up on
+  `/dashboard`. A route that declares nothing is treated as `noindex`.
+- `core/pwa/` — `PwaService`: the deferred install prompt and online/offline,
+  surfaced as a banner in the shell.
+- `core/expense/` — the money rules (`sumSpend`) and the workflow rules
+  (`availableActions`), both pure functions over `@actuo/shared`.
 - `webmcp/` — `ToolRegistry` and `ToolSession` (state gating), plus
   `ToolCallAudit`, which POSTs every invocation to `/api/tool-calls`.
   `ToolRegistry.observe()` is the single seam every invocation passes through;

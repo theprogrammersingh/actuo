@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Public routes only. Authenticated views are noindex and deliberately absent. -->
+<!--
+  Public routes only. Authenticated views are noindex and deliberately absent.
+
+  `__PUBLIC_ORIGIN__` is replaced at build time by scripts/stamp-seo.mjs: the
+  sitemap protocol requires an absolute URL in <loc>, and this file is a static
+  asset with no request to derive one from.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>/</loc>
+    <loc>__PUBLIC_ORIGIN__/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>

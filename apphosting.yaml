@@ -77,6 +77,18 @@ env:
     secret: actuo-jwt-refresh-secret
     availability: [RUNTIME]
 
+  # The public origin, stamped into sitemap.xml, robots.txt and the og: tags by
+  # scripts/stamp-seo.mjs at build time. BUILD availability, not RUNTIME: the
+  # public pages are prerendered, so there is no request to derive an origin
+  # from and the value has to be present while the build runs.
+  #
+  # Unset, every URL stays root-relative — valid, but the sitemap is not
+  # spec-compliant and scrapers may not resolve og:image. Set it to the
+  # backend's real hostname.
+  - variable: PUBLIC_ORIGIN
+    value: ""
+    availability: [BUILD]
+
   # --- Optional, with sane defaults in EnvService --------------------------
   - variable: BASE_CURRENCY
     value: INR
