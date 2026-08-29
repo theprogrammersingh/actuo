@@ -227,8 +227,6 @@ export class AuthService {
     }
   }
 
-  // -------------------------------------------------------------------------
-
   private async issueSession(
     user: UserRecord,
     orgId: string,

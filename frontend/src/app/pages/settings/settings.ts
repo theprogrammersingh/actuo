@@ -1,5 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import type { Category, Organization, Page, Role, ToolCallLogEntry } from '@actuo/shared';
+import type {
+  AuditLogEntry,
+  Category,
+  Organization,
+  Page,
+  Role,
+  ToolCallLogEntry,
+} from '@actuo/shared';
 import { Badge, Card, EmptyState, ErrorState, Skeleton } from '../../ui';
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
@@ -136,9 +143,9 @@ const ROLE_COPY: Record<Role, string> = {
         <header uiCardHeader class="mb-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="font-display text-lg font-semibold text-body">Audit log</h2>
+              <h2 class="font-display text-lg font-semibold text-body">Tool calls</h2>
               <p class="mt-1 text-sm text-muted">
-                Every tool call, whether a person clicked it or the Copilot made it.
+                Every WebMCP tool invocation, whether a person triggered it or the Copilot did.
               </p>
             </div>
 
@@ -202,6 +209,58 @@ const ROLE_COPY: Record<Role, string> = {
           }
         }
       </ui-card>
+
+      <!-- Change history --------------------------------------------------- -->
+      @if (mayAudit()) {
+        <ui-card padding="lg">
+          <header uiCardHeader class="mb-4">
+            <h2 class="font-display text-lg font-semibold text-body">Change history</h2>
+            <p class="mt-1 text-sm text-muted">
+              What actually changed, and who changed it. The panel above records tool
+              <em>calls</em>; this one records the <em>state changes</em> they and every
+              button in the app produced — approving an expense appears here, a Copilot
+              search does not.
+            </p>
+          </header>
+
+          @if (auditLoading()) {
+            <ui-skeleton shape="list" [lines]="4" label="Loading the change history" />
+          } @else if (auditError(); as message) {
+            <ui-error-state
+              heading="The change history didn’t load"
+              [message]="message"
+              (retry)="loadAudit()"
+            />
+          } @else if (auditEntries().length === 0) {
+            <ui-empty-state
+              heading="Nothing has changed yet"
+              message="File or approve an expense and the record of it shows up here."
+              [headingLevel]="3"
+            />
+          } @else {
+            <ul class="divide-y divide-line">
+              @for (entry of auditEntries(); track entry.id) {
+                <li class="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3">
+                  <ui-badge tone="neutral" [label]="entry.entity" />
+                  <span class="font-mono text-sm text-body">{{ entry.action }}</span>
+                  <span class="tabular ml-auto text-xs text-muted">{{
+                    formatTime(entry.createdAt)
+                  }}</span>
+                  <p class="w-full truncate font-mono text-xs text-muted">
+                    {{ preview(entry.metadata) }}
+                  </p>
+                </li>
+              }
+            </ul>
+
+            @if (auditTotal() > auditEntries().length) {
+              <p class="mt-4 text-xs text-muted">
+                Showing the {{ auditEntries().length }} most recent of {{ auditTotal() }}.
+              </p>
+            }
+          }
+        </ui-card>
+      }
     </div>
   `,
 })
@@ -218,6 +277,21 @@ export class Settings {
   protected readonly categories = signal<readonly Category[]>([]);
   protected readonly categoriesLoading = signal(false);
   protected readonly categoriesError = signal<string | null>(null);
+
+  /**
+   * `GET /api/audit-log` is owner/admin only — it spans other people's actions
+   * across the whole org, which is a wider disclosure than the tool-call log.
+   * Hiding the panel matches the route; the route is what enforces it.
+   */
+  protected readonly mayAudit = computed(() => {
+    const role = this.session.role();
+    return role === 'owner' || role === 'admin';
+  });
+
+  protected readonly auditEntries = signal<readonly AuditLogEntry[]>([]);
+  protected readonly auditTotal = signal(0);
+  protected readonly auditLoading = signal(false);
+  protected readonly auditError = signal<string | null>(null);
 
   protected readonly actor = signal<ActorFilter>('all');
   protected readonly entries = signal<readonly ToolCallLogEntry[]>([]);
@@ -253,6 +327,7 @@ export class Settings {
       void this.loadOrg();
       void this.loadCategories();
       void this.loadLog();
+      if (this.mayAudit()) void this.loadAudit();
     }
   }
 
@@ -303,6 +378,20 @@ export class Settings {
       this.logError.set(describeFailure(error));
     } finally {
       this.logLoading.set(false);
+    }
+  }
+
+  protected async loadAudit(): Promise<void> {
+    this.auditLoading.set(true);
+    this.auditError.set(null);
+    try {
+      const page = await this.api.get<Page<AuditLogEntry>>('/audit-log', { limit: 25 });
+      this.auditEntries.set(page.items);
+      this.auditTotal.set(page.total);
+    } catch (error) {
+      this.auditError.set(describeFailure(error));
+    } finally {
+      this.auditLoading.set(false);
     }
   }
 

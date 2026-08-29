@@ -63,6 +63,16 @@ export type ToolCallState = 'running' | 'awaiting-confirmation' | 'done' | 'erro
               <ui-badge tone="info" [label]="'via ' + toolOrigin" />
             }
 
+            <!--
+              §7 security annotations. The result carries text somebody typed —
+              a merchant name, a note, a book title from another origin — which
+              the model then reads. Saying so on the card is what turns the
+              annotation from a declared field into something a viewer can see.
+            -->
+            @if (untrusted()) {
+              <ui-badge tone="warning" label="Untrusted text" />
+            }
+
             @switch (state()) {
               @case ('running') {
                 <ui-badge tone="info" label="Running…" />
@@ -178,6 +188,8 @@ export class ToolCallCard {
   readonly origin = input<string>();
   /** Whether this tool changes state — drives the amber vs blue dot. */
   readonly mutates = input(false, { transform: booleanAttribute });
+  /** The tool's `untrustedContentHint`: its result contains user-written text. */
+  readonly untrusted = input(false, { transform: booleanAttribute });
   readonly cancellable = input(false, { transform: booleanAttribute });
   readonly startExpanded = input(false, { transform: booleanAttribute });
 

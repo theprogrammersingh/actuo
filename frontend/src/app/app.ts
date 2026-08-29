@@ -1,8 +1,18 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  effect,
+  inject,
+} from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CopilotPanel } from './copilot/copilot-panel.js';
 import { Session } from './core/session/session.js';
 import { ThemeService } from './core/theme/theme-service.js';
+import { PwaService } from './core/pwa/pwa-service.js';
+import { SeoService } from './core/seo/seo-service.js';
+import { ToolCallAudit } from './webmcp/tool-call-audit.js';
+import { ToolRegistry } from './webmcp/tool-registry.js';
 import { ToolSession } from './webmcp/tool-session.js';
 
 interface NavItem {
@@ -16,6 +26,7 @@ const NAV: NavItem[] = [
   { path: '/expenses', label: 'Expenses', icon: '≡' },
   { path: '/add', label: 'Add', icon: '＋' },
   { path: '/budgets', label: 'Budgets', icon: '◑' },
+  { path: '/agent', label: 'Agent', icon: '✦' },
   { path: '/settings', label: 'Settings', icon: '⚙' },
 ];
 
@@ -78,6 +89,51 @@ const NAV: NavItem[] = [
           </div>
         </nav>
 
+        <!--
+          PRD §8.4. Both are stated requirements and both are announced, because
+          losing your connection mid-approval is exactly the moment a silent
+          colour change is not enough.
+        -->
+        @if (pwa.isOffline()) {
+          <!--
+            Toned text on a surface, not a filled bar: status.warning is
+            #fbbf24 in dark and #b45309 in light, so a fill that reads well in
+            one theme fails contrast in the other. The border/text pattern is
+            the same one the over-budget banner uses.
+          -->
+          <div
+            class="sticky top-0 z-40 border-b border-status-warning/40 bg-surface px-4 py-2
+                   text-center text-sm font-medium text-status-warning sm:ml-56"
+            role="status"
+          >
+            You’re offline. Actuo is showing what it already loaded — nothing will save
+            until you’re back.
+          </div>
+        } @else if (pwa.canInstall()) {
+          <div
+            class="flex items-center gap-3 border-b border-line bg-surface px-4 py-2 text-sm
+                   sm:ml-56"
+            role="status"
+          >
+            <span class="flex-1 text-muted">Install Actuo for a full-screen app on this device.</span>
+            <button
+              type="button"
+              class="min-h-9 rounded-md bg-brand-teal px-3 text-sm font-medium text-ink-inverted"
+              (click)="install()"
+            >
+              Install
+            </button>
+            <button
+              type="button"
+              class="min-h-9 px-2 text-muted hover:text-body"
+              aria-label="Dismiss the install prompt"
+              (click)="pwa.dismiss()"
+            >
+              ✕
+            </button>
+          </div>
+        }
+
         <!-- pb-24 keeps content clear of the mobile tab bar and the safe area. -->
         <main class="pb-24 sm:ml-56 sm:pb-8">
           <router-outlet />
@@ -112,15 +168,40 @@ const NAV: NavItem[] = [
 export class App {
   protected readonly session = inject(Session);
   protected readonly theme = inject(ThemeService);
+  protected readonly pwa = inject(PwaService);
   private readonly tools = inject(ToolSession);
+  private readonly registry = inject(ToolRegistry);
+  private readonly audit = inject(ToolCallAudit);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly seo = inject(SeoService);
 
   protected readonly nav = NAV;
 
   constructor() {
+    /*
+     * Keep the `robots` meta tag in step with the route. It lives here because
+     * the tag is document-global: a component that sets it on load leaves it
+     * behind, which is how an authenticated view ended up advertising itself as
+     * indexable (PRD §8.5).
+     */
+    this.seo.start();
+
     // Publish tools once there is a session, and retire them on sign-out.
     effect(() => {
       if (this.session.isAuthenticated()) void this.tools.start();
       else this.tools.stop();
+    });
+
+    /*
+     * Ask the server how many expenses are waiting on a decision, as soon as
+     * there is a session to ask with.
+     *
+     * Without this the count sits at 0 forever, `ToolSession`'s gate never
+     * opens, and `approve_expense` never registers — the state-gated tool
+     * (PRD §7) existed, was tested, and did nothing in the running app.
+     */
+    effect(() => {
+      if (this.session.isAuthenticated()) void this.session.refreshPendingApprovals();
     });
 
     /*
@@ -132,6 +213,38 @@ export class App {
       this.tools.setRole(this.session.role());
       this.tools.setPendingApprovals(this.session.pendingApprovals());
     });
+
+    /*
+     * Everything that hangs off a tool call, in one place.
+     *
+     * The shell is where this belongs: `ToolRegistry` stays a pure registry
+     * with no HTTP or session dependencies, and there is exactly one
+     * subscription rather than one per consumer.
+     */
+    const stop = this.registry.observe((invocation) => {
+      this.audit.record({
+        // Everything reaching the registry is agent-initiated — the in-page
+        // Copilot, or an external browser agent through WebMCP's `execute`.
+        // The one human tool caller is the declarative Add Expense form, which
+        // logs itself because only it can tell the two apart.
+        actor: 'agent',
+        toolName: invocation.toolName,
+        input: invocation.input,
+        output: invocation.error ? { error: invocation.error } : invocation.output,
+      });
+
+      // An approval decision changes the queue, which closes the gate. Reads
+      // cannot, and `search_expenses` runs often enough that polling on it
+      // would be a request per question.
+      if (this.registry.isMutating(invocation.toolName)) {
+        void this.session.refreshPendingApprovals();
+      }
+    });
+    this.destroyRef.onDestroy(stop);
+  }
+
+  protected async install(): Promise<void> {
+    await this.pwa.install();
   }
 
   protected async signOut(): Promise<void> {

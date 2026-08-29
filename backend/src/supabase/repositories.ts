@@ -25,12 +25,11 @@ import type {
   Organization,
   Page,
   Role,
+  AuditLogEntry,
   ToolCallLogEntry,
 } from '@actuo/shared';
 
-// ---------------------------------------------------------------------------
 // Records that exist server-side only
-// ---------------------------------------------------------------------------
 
 /**
  * A user row *including* the password hash.
@@ -69,7 +68,15 @@ export interface OrgMember {
 
 export interface CategorySpendRow {
   categoryId: string | null;
+  /** Sum of rows that have a value in the org's base currency. */
   total: number;
+  /**
+   * Rows skipped because they are in another currency and `converted_amount`
+   * is null. Carried up to `BudgetStatus.unconvertedCount` so the figure can
+   * say what it left out instead of adding foreign amounts as if they were
+   * base-currency ones.
+   */
+  unconverted: number;
 }
 
 export interface ExpenseQuery {
@@ -132,9 +139,7 @@ export interface AppendToolCallInput {
   output: unknown;
 }
 
-// ---------------------------------------------------------------------------
 // Interfaces
-// ---------------------------------------------------------------------------
 
 export interface UserRepository {
   findByEmail(email: string): Promise<UserRecord | null>;
@@ -209,13 +214,20 @@ export interface RefreshTokenRepository {
   revokeAllForUser(userId: string): Promise<void>;
 }
 
-export interface AuditLogRepository {
-  append(entry: AuditEntry): Promise<void>;
+export interface ListAuditQuery {
+  /** Narrow to one kind of thing, e.g. `expense`. */
+  entity?: string;
+  limit: number;
+  offset: number;
 }
 
-// ---------------------------------------------------------------------------
+export interface AuditLogRepository {
+  append(entry: AuditEntry): Promise<void>;
+  /** Newest first, for GET /api/audit-log. Backed by `audit_log_org_created_idx`. */
+  list(orgId: string, query: ListAuditQuery): Promise<Page<AuditLogEntry>>;
+}
+
 // Injection tokens
-// ---------------------------------------------------------------------------
 
 export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
 export const ORG_REPOSITORY = Symbol('ORG_REPOSITORY');

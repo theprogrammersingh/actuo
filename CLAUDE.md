@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Scaffold, backend, design system, BYOK Gemini layer, WebMCP tool layer and the
-Copilot are all built and committed. Remaining: app shell + routing wiring,
-Firebase App Hosting deploy, and the README/demo script.
+Every Phase 0 item is built and committed — scaffold, backend, design system,
+BYOK Gemini layer, WebMCP tool layer, Copilot, app shell, expense workflow UI,
+PWA, SEO, and the single-process deploy path. Remaining: running the actual
+Firebase deploy, and the demo video. Everything else in the PRD is Phase 1–3.
 
 Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 
@@ -25,6 +26,61 @@ piece is the **Actuo Copilot** — a site-agnostic chat widget that discovers to
 
 Built for a hackathon deadline (Aug 31, 2026).
 
+## Comments
+
+The comment density here is deliberate and it is high — 3,850 comment lines
+across 27,649, and files like `core/expense/amount.ts` and `webmcp/tool-call-audit.ts`
+are over half prose. **That is the design, not an accident, and not cleanup
+backlog.** Most of what this repo knows that a reader cannot infer — why
+`approved` is not `success`, why `turnsToContents()` replays raw parts, why a
+$200 charge must not be added to a rupee total — lives in those comments. A
+sweep that removes them destroys the most valuable thing in the codebase.
+
+So "remove unnecessary comments" here means a very short list:
+
+- ASCII rule lines that carry no words (`// ------------------`), including the
+  two rules wrapped around a section title. Keep the title, drop the rules.
+- Commented-out code, and comments describing code that no longer exists.
+- A comment that only restates the line beneath it.
+
+**Never remove**, however verbose:
+
+- Any comment saying *why* — a rejected alternative, a bug it prevents, a spec
+  quirk, a rule that looks arbitrary until explained.
+- `LOAD-BEARING`, `ORDER IS SIGNIFICANT`, and "do not simplify this away" notes.
+  Several exist because the simplification was already tried and broke something
+  subtle: thought signatures, `parseInputSchema()`, `setGlobalPrefix`.
+- PRD/Design-Doc section references (`PRD §6.4`, `§2.2`) — they are the link back
+  to the source of truth.
+- JSDoc `@example` blocks. They look like commented-out code and are not.
+
+Measure before sweeping. A scan of all 177 source files found only 16 removable
+lines — 5 comments restated their code, zero were stale TODOs, zero were
+commented-out code. If a comment sweep proposes to remove hundreds of lines, it
+has misread prose as noise; stop and re-read the list above.
+
+## Commits
+
+**No commit message, PR title, or PR body in this repo mentions Claude, Claude
+Code, or names an AI as a collaborator.** Specifically, never append any of:
+
+- `Co-Authored-By: Claude ...` — or any `Co-Authored-By` trailer naming an AI
+- `Claude-Session: https://claude.ai/code/...`, or a bare `claude.ai/code` URL
+- `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
+
+This **overrides the default Claude Code commit and PR trailers** — do not add
+them back "because the tool normally does". The work is authored by the repo's
+git user alone; a co-author trailer attributes it to a contributor who is not
+one, and GitHub then renders that account on every commit and in the repo's
+contributor list.
+
+History was rewritten once, on 2026-08-29, to strip those two trailers from all
+18 commits on `main` and `revive-webmcp-dead-features`. Re-introducing them
+means doing that rewrite again, so check `git log` before committing.
+
+Naming the file `CLAUDE.md` in a message is fine — it is a real file in the
+repo, and several commits legitimately say they changed it.
+
 ## Commands
 
 **This repo uses pnpm.** Do not run `npm install` — it would create a competing
@@ -33,7 +89,7 @@ declarations (see "Why pnpm changes things" below).
 
 ```bash
 pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
-pnpm run dev           # builds shared, then backend (:3000) + frontend (:4200) together
+pnpm run dev           # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
@@ -49,8 +105,12 @@ pnpm --filter backend run test:e2e
 
 # frontend: MUST go through ng test, which is the @angular/build:unit-test builder
 pnpm --filter frontend run test
-pnpm --filter frontend exec ng test --no-watch --test-name-pattern "ToolRegistry"
+pnpm --filter frontend exec ng test --no-watch --filter "ToolRegistry"
 ```
+
+The name filter is `--filter` (a regex over suite and test names). It is **not**
+`--test-name-pattern` — that is vitest's own flag, and the Angular builder rejects
+it outright with `Unknown argument`.
 
 `frontend`'s `test` script already carries `--no-watch`, deliberately: npm swallows a
 bare `--` while pnpm forwards it to Angular as an empty argument, which the builder
@@ -81,7 +141,8 @@ and `pnpm run build` handle the ordering.
 
 `frontend/` and `backend/` are separate codebases (own package.json, tsconfig, tests)
 that ship as **one** Firebase App Hosting deploy: a single Node process routes
-`/api/*` to Nest and everything else to Angular's SSR handler.
+`/api/*` to Nest and everything else to Angular's SSR handler. That process is
+`server.mjs` at the repo root — see "The deploy" below.
 
 ## Why pnpm changes things
 
@@ -175,6 +236,79 @@ working — do not "simplify" them away.
 `fromOrigins`/`exposedTo` with `NotSupportedError`, so the polyfill is a same-origin
 fallback only.
 
+**Cross-origin also requires an actual second origin.** The partner page lives in
+`frontend/public/partner-demo/`, so it is *also* served by the app itself — and from
+there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which is
+exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
+dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
+`/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
+third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
+by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
+app's own origin, `/agent` says so instead of showing an empty list.
+
+## The deploy
+
+`server.mjs` at the repo root is the production entry point: `pnpm start`, and
+what `apphosting.yaml`'s `runCommand` names. It imports the two build outputs and
+composes them in one process.
+
+- It appends the Angular handler to **Nest's own Express instance**, after Nest's
+  routes. That works only because `setGlobalPrefix('/api')` scopes Nest's
+  not-found router to `/api` instead of installing a global catch-all — the
+  property `backend/test/routing-contract.e2e-spec.ts` exists to pin. If that
+  spec breaks, the deploy is broken too, in a way that returns the app shell for
+  a bad API call.
+- The built Angular SSR bundle is **self-contained** (only `node:` imports;
+  Express is bundled in) and serves `dist/browser` itself. So the repo root needs
+  no runtime dependency, and `node_modules` there stays at two dev packages.
+- `createNodeRequestHandler` returns its argument unchanged, so the exported
+  `reqHandler` *is* the Express app and mounts directly as middleware.
+
+**`NG_ALLOWED_HOSTS` is load-bearing, and it fails silently.** Angular 21 checks
+the `Host` header against an allowlist (SSRF protection). Off the list it does not
+error — it falls back to **client-side rendering**, quietly discarding the SSR and
+structured-data work in PRD §8.5. The env var *replaces* the build-time list in
+`angular.json` (`getAllowedHostsFromEnv() ?? options.allowedHosts`), so a deploy
+must list every hostname it answers on. The port is stripped before matching, and
+`*.example.com` wildcards work. Verify with: the HTML for `/` contains
+`ng-server-context`. `angular.json` carries `localhost` so `node server.mjs`
+renders locally.
+
+**`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one.** The public pages
+are prerendered, so absolute URLs — `<loc>` in the sitemap, `og:image`,
+`canonical` — must be decided before the build finishes. `index.html`,
+`sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that survives
+prerendering into every generated file, and `scripts/stamp-seo.mjs` replaces it
+across `dist/frontend/browser` as the last step of `pnpm run build`. Unset, it
+substitutes `''` and everything stays root-relative and valid.
+
+**The service worker must never cache `/api`.** `ngsw-config.json` has no
+`dataGroups` at all, deliberately: a cached response would show stale money and
+would undercut the promise that every read goes through an authenticated route.
+`navigationUrls` also excludes `/partner-demo/**`, which is a separate site that
+re-registers WebMCP tools on each load.
+
+**`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.partnerOrigin`
+drops its `http://localhost:4201` default, because serving that from a deployed
+instance makes `/agent` embed an iframe pointing at each visitor's own machine.
+
+## The expense workflow is one table, shared
+
+Which action is legal, who may perform it, and on whose row — all of it lives in
+`shared/src/domain.ts` (`canTransition`, `TRANSITION_ROLES`,
+`OWNER_ONLY_ACTIONS`, `NOT_ON_OWN_ACTIONS`, `mayPerformOn`). `ExpensesService.transition`
+enforces it and `core/expense/expense-actions.ts` renders from it, so a button
+cannot appear for something the server would refuse.
+
+`backend/src/expenses/expense-state-machine.ts` keeps only what is genuinely
+server-side — the 409 mapping — and re-exports the rest.
+
+Two rules that look alike and are not: `OWNER_ONLY_ACTIONS` (submit, rework) is
+"only your own row, unless you are an approver"; `NOT_ON_OWN_ACTIONS` (approve,
+reject) is "never your own row, whoever you are" — segregation of duties.
+Getting them confused is how the UI briefly offered an Approve button that always
+403'd.
+
 ## Module map
 
 **backend/** — `auth/` (argon2id + JWT, rotating refresh, guards), `expenses/`
@@ -199,11 +333,29 @@ request; the access token deliberately carries no role claim.
   translation itself — never pre-convert with `toFunctionDeclarations()`, or the
   schema lands under `parameters` where the second pass cannot see it and every
   tool reaches the model with no arguments.**
-- `webmcp/` — `ToolRegistry` and `ToolSession` (state gating).
+- `core/seo/` — `SeoService` applies each route's `data.robots` on every
+  navigation. A meta tag is document-global, so a component that sets one on
+  load leaves it behind; that is how `index, follow` used to end up on
+  `/dashboard`. A route that declares nothing is treated as `noindex`.
+- `core/pwa/` — `PwaService`: the deferred install prompt and online/offline,
+  surfaced as a banner in the shell.
+- `core/expense/` — the money rules (`sumSpend`) and the workflow rules
+  (`availableActions`), both pure functions over `@actuo/shared`.
+- `webmcp/` — `ToolRegistry` and `ToolSession` (state gating), plus
+  `ToolCallAudit`, which POSTs every invocation to `/api/tool-calls`.
+  `ToolRegistry.observe()` is the single seam every invocation passes through;
+  `App` subscribes once and fans out to the audit write and the
+  pending-approval re-poll. Keep HTTP and session dependencies out of the
+  registry itself — that is what keeps its spec free of fakes.
 - `tools/` — the five tool `execute()` implementations over `/api/*`.
 - `copilot/` — `Copilot` (the agent loop) and `CopilotPanel` (orb + panel).
 - `core/api/` — `ApiClient`. `core/theme/` — `ThemeService`.
-- `pages/add-expense/` — the declarative WebMCP form.
+- `pages/add-expense/` — the declarative WebMCP form. It is the only tool call a
+  *human* can make, so it logs itself with the actor `agentInvoked` reports;
+  everything else through the registry is an agent.
+- `pages/agent/` — `/agent`, the WebMCP surface made visible: browser support,
+  the cross-origin partner iframe and what it exposed, and the live invocation
+  log. The only consumer of `discoveredTools()` and `invocationLog()`.
 
 ## Thought signatures (Gemini 3 function calling)
 
@@ -245,6 +397,28 @@ It uses a `DEAD` status for code that exists and passes tests but has **no
 caller**, so it does nothing in the running app. Three headline features are in
 that state today; `DEAD` is separated from `PARTIAL` precisely because it looks
 finished in both the source and the test count.
+
+## Money: never add two currencies
+
+There is no FX pass. `expenses.service.ts` writes `converted_amount` **only**
+when the expense is already in the org's base currency, so it is `null` for
+every foreign row — and the seed data has INR, USD and EUR.
+
+So a row counts toward a total only when it has a base-currency value, and the
+ones that do not are **counted and stated**, never dropped and never added:
+
+- Frontend: `core/expense/amount.ts` — `isConverted()`, `sumSpend()` (returns
+  `{total, excluded}`), `expenseCurrency()` for the label on a single row, and
+  `excludedNotice()` for the copy. Every rollup goes through `sumSpend`.
+- Backend: `sumByCategory()` sums only non-null `converted_amount` and returns
+  `unconverted`; that reaches the client as `BudgetStatus.unconvertedCount`, and
+  the `get_budget_status` tool passes it to the model so the Copilot can qualify
+  the figure rather than state a partial total as a complete one.
+
+The earlier code fell back to the raw `amount`, on the reasoning that a slightly
+wrong number beat a bar reading zero. It was not slightly wrong: a $200 charge
+was counted as ₹200. When a real FX pass starts filling `converted_amount`,
+those rows re-enter every total with no code change.
 
 ## Architectural rules that must not be violated
 

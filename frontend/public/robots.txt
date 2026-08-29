@@ -6,9 +6,10 @@ Disallow: /dashboard
 Disallow: /expenses
 Disallow: /add
 Disallow: /budgets
+Disallow: /agent
 Disallow: /settings
 Disallow: /login
 Disallow: /signup
 Disallow: /api/
 
-Sitemap: /sitemap.xml
+Sitemap: __PUBLIC_ORIGIN__/sitemap.xml

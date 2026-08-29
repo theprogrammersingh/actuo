@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 49 backend unit · 34 backend e2e · 602 frontend
+**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 64 backend unit · 34 backend e2e · 742 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -112,8 +112,8 @@ alive. Always verify after — `pkill`'s exit status is not proof.
 | Recurring templates | 1 | ⬜ | `recurring_templates` table is **absent from the migration** |
 | CSV bulk import | 2 | ⬜ | Export exists; import does not |
 | Soft delete | 0 | ✅ | Partial indexes `where deleted_at is null` |
-| Audit trail | 0 | 🟡 | `audit_log` is **written** on every mutation, but has no read endpoint and no viewer. The Settings "audit log" reads `tool_call_log`, a different table |
-| **Expense actions in the UI** | 0 | ⬜ | The Expenses page is **read-only** — no edit, delete, submit or approve control anywhere. `POST /expenses` via Add Expense is the only mutation a human can reach |
+| Audit trail | 0 | ✅ | `GET /api/audit-log` (owner/admin) plus a Change history panel in Settings, beside the renamed Tool calls panel. The copy states the difference: `audit_log` is what changed, `tool_call_log` is what an agent did |
+| **Expense actions in the UI** | 0 | ✅ | Submit / approve / reject / reimburse / reopen / delete on every row, offered from `mayPerformOn` in `@actuo/shared` — the same function `ExpensesService.transition` enforces with, so a button that would 403 is never rendered. Decisions take an optional note inline; delete is two-step |
 
 **Verify:** create an expense, confirm it appears in the list and in `audit_log`.
 
@@ -125,7 +125,7 @@ alive. Always verify after — `pkill`'s exit status is not proof.
 | Per-team budgets | 2 | ⬜ | No team entity exists |
 | Threshold alerts (80%) | 1 | ⬜ | Utilization is computed and shown; no threshold, no alert, no notification |
 | Rollover vs reset | 1 | 🟡 | `rollover` column is persisted but **read by nothing** — `status()` always computes a fresh calendar month, so the flag has no effect |
-| Budget creation UI | 1 | ⬜ | `POST /api/budgets` exists; nothing in the app calls it |
+| Budget creation UI | 1 | ✅ | A form on the Budgets page for owner/admin. `POST /budgets` inserts and a unique index makes a repeat a 409, so only categories without a budget are offered — **changing** an existing budget is still unsupported (no PATCH route) |
 
 **Verify:** with a category over budget, confirm the bar turns danger-toned and
 the figure matches a hand-check against the expense rows.
@@ -135,7 +135,7 @@ the figure matches a hand-check against the expense rows.
 | Item | Phase | Status | Notes |
 |---|---|---|---|
 | Five statuses + state machine | 1 | ✅ | `expense-state-machine.ts`; all 20 illegal transitions tested |
-| submit → approve/reject | 1 | 🟡 | **API only.** Self-approval banned, 409 on illegal moves. No UI control exists |
+| submit → approve/reject | 1 | ✅ | UI controls on every row. Self-approval is banned in one shared rule (`NOT_ON_OWN_ACTIONS`) that the server enforces and the UI reads, so the button is not offered either |
 | Multi-step chains | 2 | ⬜ | One decision ends the flow |
 | Comment thread | 2 | 🟡 | `approvals.comment` is written on a decision; there is no read path, no thread, and no way to comment without deciding |
 
@@ -146,18 +146,27 @@ their own expense.
 
 | Item | Phase | Status | Notes |
 |---|---|---|---|
-| Original + converted amounts stored | 1 | ✅ | Columns exist; `core/expense/amount.ts` prefers `convertedAmount` |
+| Original + converted amounts stored | 1 | ✅ | Columns exist. `core/expense/amount.ts` owns the rule: `sumSpend()` adds only base-currency rows and reports the rest |
 | Live FX + daily cache | 1 | ⬜ | No FX client, no cache, no rates table |
 | Historical rate lock | 1 | ⬜ | No rate column |
 
-> **⚠️ Correctness bug, not just a gap.** `convertedAmount` is set only when the
-> currency already equals the base currency, otherwise `null`, and the repository
-> falls back to the raw `amount` when summing. **Budget and dashboard totals
-> therefore add USD and EUR to INR as if they were the same unit.** The seed data
-> contains all three. This understates or overstates real spend today.
+> **Totals are now honest about what they exclude.** `convertedAmount` is still
+> only set when the currency already equals the base currency, so foreign rows
+> have no base-currency value. They used to be added at face value — a $200
+> charge counted as ₹200. Now a row counts only when it has a converted value,
+> and the ones that do not are **counted and stated**: `sumSpend()` returns
+> `{total, excluded}`, `sumByCategory()` returns `unconverted`, and that surfaces
+> as `BudgetStatus.unconvertedCount`, a muted line on the dashboard and budgets
+> screens, and a field in the `get_budget_status` tool result so the Copilot can
+> qualify the figure. Row labels follow the same rule — an unconverted $50 prints
+> as `$50`, not `₹50`.
+>
+> This is the honest interim, not the feature: real FX (live rates, daily cache,
+> historical lock) is still ⬜, and the moment `converted_amount` starts being
+> filled, those rows re-enter every total with no code change.
 
 **Verify:** file expenses in two currencies and confirm the dashboard total is
-not a naive sum.
+not a naive sum, and that it says how many rows it left out.
 
 ## §6.6 Analytics — 🟡
 
@@ -179,6 +188,8 @@ transport. **Phase 2.**
 
 ## §6.8 Copilot — 🟡 (strongest area)
 
+Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Phase 3) is left.
+
 | Item | Phase | Status | Notes |
 |---|---|---|---|
 | Floating widget, orb → panel | 0 | ✅ | Full-screen sheet on mobile |
@@ -188,7 +199,7 @@ transport. **Phase 2.**
 | Confirmation before mutating tools | 0 | ✅ | In-chat card. PRD says "native dialog"; in-chat was chosen deliberately |
 | Key-setup flow when no key | 0 | ✅ | Opens into setup rather than failing silently |
 | Embeddable via one `<script>` | 3 | ⬜ | It is an Angular component inside the app shell |
-| **Cross-origin tool use** | 0 | 💀 | `invokeCrossOrigin` and the partner page both work and are tested, but **`discoverRemoteTools()` has no caller** — unreachable from the UI. §11 calls this "the most impressive part" |
+| **Cross-origin tool use** | 0 | ✅ | `/agent` embeds the partner page from `PARTNER_DEMO_ORIGIN` (:4201, `scripts/partner-server.mjs`) with `allow="tools"` and calls `discoverRemoteTools()`. Verified in Chrome 151 with the flag: both partner tools discovered, `executeTool()` returned a price cross-origin |
 
 ## §6.9 Admin & Settings — 🟡
 
@@ -199,7 +210,7 @@ transport. **Phase 2.**
 | Org settings | 2 | 🟡 | Displays name and currency; no edit route |
 | Category management | 2 | 🟡 | Read-only list; no create/rename/delete |
 | Approval rules | 2 | ⬜ | — |
-| **Audit log viewer** | 2 | 💀 | The viewer renders `GET /tool-calls` with a human/agent filter — but **nothing writes to `tool_call_log`.** `appendQuietly` has no callers, so it shows seed rows forever |
+| **Audit log viewer** | 2 | ✅ | `ToolCallAudit` POSTs every invocation. Verified live: a Copilot-path tool call appears under Agent, an Add Expense submit under Human |
 
 ## §7 WebMCP Coverage Map — the learning checklist
 
@@ -208,36 +219,44 @@ transport. **Phase 2.**
 | Declarative API (annotated form) | ✅ | Add Expense: `toolname`/`tooldescription`/`toolparamdescription`/`toolautosubmit`, `agentInvoked` + `respondWith`, **no JS registration** |
 | Imperative `registerTool` | ✅ | Five tools, per-tool `AbortController` lifetime |
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
-| **Dynamic / state-gated tools** | 💀 | `ToolSession` is correct and has 7 passing tests, but the gate reads `Session.pendingApprovals()` and **`refreshPendingApprovals()` is never called** — it stays 0, so `approve_expense` never registers in the running app |
+| **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
-| Cross-origin tools | 💀 | See §6.8 — mechanism tested, never wired up |
-| Security annotations | 🟡 | `readOnlyHint` on all five. **`untrustedContentHint` is declared and used on zero tools** |
-| `getTools()` discovery | 🟡 | Implemented and tested, but used only on the (dead) cross-origin path — the Copilot reads its own registry |
-| `executeTool()` + manual debug panel | 🟡 | `executeTool()` done. **No debug panel** — `invocationLog` and `discoveredTools` have no consumer |
+| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier setup unprovable |
+| Security annotations | ✅ | `readOnlyHint` on all five, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the partner-demo tools; shown as a badge on the tool-call card |
+| `getTools()` discovery | ✅ | Drives the cross-origin path and the `/agent` panel; re-runs on `toolchange`. The Copilot still reads its own registry for local tools, deliberately — see "the tool registry decision" |
+| `executeTool()` + manual debug panel | 🟡 | `executeTool()` done, and `/agent` renders `discoveredTools` and `invocationLog`. Still read-only: there is no form to invoke a tool by hand with arbitrary arguments |
 
 > Open question: `generate_report` is annotated `readOnlyHint: true` but creates a
 > server-side job. Defensible, but decide it deliberately.
 
-## §8.4 PWA — ⬜
+## §8.4 PWA — ✅
 
-`@angular/pwa` and `@angular/service-worker` are **not installed**. No manifest,
-no service worker, no offline screen, no install prompt. *(This was previously
-reported as scaffolded. It was not — `ng add @angular/pwa` did not take.)*
+`@angular/service-worker` installed and enabled on the production build only.
+`frontend/public/manifest.webmanifest`, icons generated by
+`scripts/generate-brand-assets.mjs` (192, 512, maskable, apple-touch), and
+`ngsw-config.json`.
 
-What does exist: `theme-color` for both schemes, `viewport-fit=cover`, genuinely
-mobile-first layouts, ≥44px touch targets. **Phase 0** — it is a stated PRD goal.
+**`dataGroups` is empty on purpose** — caching `/api` would show stale money and
+would undercut the promise that every read goes through an authenticated route.
+`navigationUrls` also excludes `/partner-demo/**`, a separate site that
+re-registers its WebMCP tools on each load.
+
+`PwaService` holds the deferred `beforeinstallprompt` and online/offline state;
+the shell renders an install banner and an offline banner from it. Verified live
+on the production build: one activated worker, `/api` absent from `ngsw.json`,
+and the offline banner appearing and clearing on the network events.
 
 ## §8.5 SEO — 🟡
 
 | Item | Status | Notes |
 |---|---|---|
 | robots.txt | ✅ | Gated routes disallowed |
-| sitemap.xml | 🟡 | Public route only; `<loc>` should be absolute, not relative |
+| sitemap.xml | ✅ | Public route only, `<loc>` absolute via the `__PUBLIC_ORIGIN__` stamp |
 | Structured data | ✅ | Real `application/ld+json` `SoftwareApplication` |
 | llms.txt | ✅ | Accurate tool inventory and permission model |
-| OG / Twitter | 🟡 | No `og:image`, no `og:url` — and `twitter:card` is `summary_large_image` with no image |
-| SSR on public pages | 🟡 | `app.routes.server.ts` prerenders `**` — including authenticated routes |
-| noindex on gated views | 🟡 | robots.txt covers crawlers, but `landing.ts` sets `robots: index, follow` **globally**, and in an SPA that tag persists into `/dashboard` |
+| OG / Twitter | ✅ | 1200×630 `og.png` generated from the brand tokens, plus `og:url`, `og:image:alt`, `twitter:image` and a canonical link |
+| SSR on public pages | 🟡 | `app.routes.server.ts` prerenders `**` — including authenticated routes, which land on the app shell and hydrate client-side (correct for a gated view, accidental rather than chosen). **Was silently broken until 2026-08-29:** Angular 21's `Host` allowlist rejected every request and fell back to CSR, discarding the SSR entirely. Fixed via `security.allowedHosts` + `NG_ALLOWED_HOSTS`; the check is that `/` contains `ng-server-context` |
+| noindex on gated views | ✅ | `data.robots` per route, applied by `SeoService` on every navigation; a route that declares nothing defaults to `noindex`. Verified live: the tag flips going from `/` to `/expenses` |
 
 ## §9 Non-functional
 
@@ -250,39 +269,67 @@ mobile-first layouts, ≥44px touch targets. **Phase 0** — it is a stated PRD 
 | Supabase call timeouts | ✅ | 8s deadline — a stall used to hang the request forever |
 | Unit tests for tool `execute()` | ✅ | — |
 | Structured logging / error tracking | ⬜ | Nest logger only; no Sentry-tier reporting |
-| **CI** | ⬜ | No `.github/workflows` at all, contrary to §8.1 |
+| **CI** | 🟡 | `.github/workflows/ci.yml` runs the full Definition of Done gate on push and PR. Never executed by GitHub — verified by running its exact command sequence locally |
+| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts` |
 
 ## §12 Submission criteria — ⬜
 
 | Item | Status | Notes |
 |---|---|---|
-| **Public deployed URL** | ⬜ | No `firebase.json`, no `apphosting.yaml`. `frontend/src/server.ts` is the stock scaffold with the API mount still commented out, and the `server.mjs` that `bootstrap.ts` describes **does not exist** — the combined single-process deploy is unbuilt |
-| README | ⬜ | Both workspace READMEs are untouched boilerplate. `llms.txt` is good source material |
+| **Public deployed URL** | 🟡 | The deploy path is **built and verified locally**: `server.mjs` composes Nest under `/api` with the Angular SSR handler, `apphosting.yaml` and `firebase.json` are committed with build/run commands stated outright. What is left is running it — creating the backend and the three secrets needs an interactive Google login |
+| README | ✅ | Root `README.md`: what is WebMCP-specific and where, the flag setup, what works without it, and the deploy steps. Workspace READMEs are still starter boilerplate |
+| Demo video | ⬜ | The script is the "What to look at" list in `README.md` |
 | Demo video | ⬜ | — |
 | Source with clear tool definitions | ✅ | `shared/src/tools.ts` |
 
 ---
 
-## The five things worth fixing first
+## What to fix next
 
-Ranked by demo impact per unit of work. Each is small; each currently makes a
-headline feature look broken or absent.
+Every Phase 0 row is green as of 2026-08-29. What is left is the deploy itself,
+the video, and Phase 1–3 features.
 
-1. **Call `refreshPendingApprovals()`** — one call site revives the state-gated
-   `approve_expense` tool, a §7 row and a scripted demo beat.
-   *Verify:* sign in as owner with a submitted expense pending → `approve_expense`
-   appears in the DevTools WebMCP panel → approve → the tool disappears.
-2. **Write to `tool_call_log`** — one call in `ToolRegistry.log()` makes the audit
-   viewer and the "everything the agent did" narrative real.
-   *Verify:* run a Copilot tool, then see the row appear under Settings → filtered
-   to `agent`.
-3. **Call `discoverRemoteTools()`** — unlocks the cross-origin demo.
-   *Verify:* open the partner page in flag-enabled Chrome, ask the Copilot for a
-   book price, confirm the card shows the `via …` origin badge.
-4. **Fix FX, or stop summing mixed currencies** — today the totals are wrong. Even
-   refusing to sum unconverted rows and saying so beats a confident wrong number.
-   *Verify:* two currencies on the dashboard; total is not a naive sum.
-5. **Build the deploy path** — `server.mjs` mounting Nest under `/api` with the
-   Angular SSR handler as fallback. §12's first checkbox depends on it.
-   *Verify:* `node server.mjs` from the repo root serves `/` as HTML and
-   `/api/<unknown>` as JSON 404.
+1. **Run the deploy.** Everything is committed; the remaining steps need an
+   interactive Google login — see the Deploying section of `README.md`. The
+   project `actuo-2f1f3` exists and has no App Hosting backend yet; App Hosting
+   needs the Blaze plan.
+   *Verify:* `/api/health` returns JSON on the public URL; `/` returns HTML
+   containing `ng-server-context` (if not, `NG_ALLOWED_HOSTS` is wrong and the
+   site is rendering client-side); `PUBLIC_ORIGIN` set, so `<loc>` in the
+   sitemap is absolute.
+2. **Demo video** — the last §12 checkbox. The script is the "What to look at"
+   list in `README.md`.
+3. **Real FX** — live rates, a daily cache, a historical lock at write time.
+   Totals are honest about the gap now, but they still exclude real spend.
+4. **Editing an existing budget** — `POST /budgets` inserts and there is no
+   PATCH, so a budget can be set once and not changed. The form hides categories
+   that already have one rather than offering a guaranteed 409.
+5. **Everything else is Phase 1–3**: receipt OCR, notifications, recurring
+   templates (the table is not in the migration), multi-step approval chains,
+   comment threads, teams, tags, CSV import, PDF export, session management,
+   org invite/switch, `/api/analytics/*`, and packaging the Copilot as a
+   standalone script.
+
+### Known rough edges, deliberately not fixed here
+
+- **The cross-origin demo cannot work on the deployed URL as configured.** The
+  partner page ships inside the app, so on a deploy it is same-origin, and
+  `/agent` says so rather than showing an empty list. Hosting
+  `frontend/public/partner-demo/` elsewhere and setting `PARTNER_DEMO_ORIGIN` is
+  a small follow-up.
+- **CI has never run on GitHub.** The workflow was verified by running its exact
+  command sequence locally; `act` is not installed on this machine.
+- **Firebase App Hosting has an open issue with pnpm workspaces**
+  ([firebase-tools#7478](https://github.com/firebase/firebase-tools/issues/7478),
+  `lockfile not found`) that reproduces when the app is in a *subdirectory*.
+  `rootDir: "/"` keeps the lockfile where the installer looks — the arrangement
+  least likely to hit it, but untested against the real builder. If it fails,
+  `node server.mjs` runs unchanged on Cloud Run, Render or Fly.
+- **`/agent` is a sixth tab on mobile.** The labels fit (widest is "Dashboard" at
+  ~54px in a 65px slot at 390px, measured), but it is tight, and this was
+  verified by measurement rather than at a real 390px viewport.
+- **No CSP header is set anywhere yet.** When one lands it will need `frame-src`
+  for the partner origin, or the cross-origin demo breaks silently.
+- **Brand assets are generated, not designed.** `scripts/generate-brand-assets.mjs`
+  produces the icons and og card from the palette with ImageMagick. They are
+  clean but plain, and regenerating after a palette change is manual.

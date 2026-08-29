@@ -1,8 +1,10 @@
 import type { BudgetStatus } from '@actuo/shared';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiClient } from '../../core/api/api-client.js';
+import { ApiClient, ApiError } from '../../core/api/api-client.js';
+import { Session } from '../../core/session/session.js';
 import { Budgets } from './budgets.js';
 
 function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
@@ -16,6 +18,7 @@ function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
     remaining: budgeted - spent,
     utilization: budgeted > 0 ? spent / budgeted : Number.POSITIVE_INFINITY,
     currency: 'INR',
+    unconvertedCount: 0,
     ...overrides,
   };
 }
@@ -155,6 +158,32 @@ describe('Budgets', () => {
     });
   });
 
+  describe('unconverted spend', () => {
+    /**
+     * The server's `spent` excludes expenses it could not express in the base
+     * currency, because there is no FX pass (PRD §6.5). A bar drawn from a
+     * partial figure with nothing saying so reads as a complete one.
+     */
+    it('says how many expenses the figures leave out', async () => {
+      api.get.mockResolvedValue([
+        budget({ categoryId: 'a', categoryName: 'Travel', unconvertedCount: 2 }),
+        budget({ categoryId: 'b', categoryName: 'Meals', unconvertedCount: 1 }),
+      ]);
+      create();
+      await settle();
+
+      expect(text()).toContain('3 expenses in other currencies');
+    });
+
+    it('says nothing when every expense was in the base currency', async () => {
+      api.get.mockResolvedValue(HEALTHY);
+      create();
+      await settle();
+
+      expect(text()).not.toContain('in other currencies');
+    });
+  });
+
   describe('empty (§3.6)', () => {
     it('names how a budget gets created instead of saying "No data"', async () => {
       api.get.mockResolvedValue([]);
@@ -210,5 +239,205 @@ describe('Budgets', () => {
       // …and the org total says so in words rather than drawing an empty bar.
       expect(text()).toContain('₹900 over budget overall.');
     });
+  });
+});
+
+/**
+ * PRD §6.3. `POST /api/budgets` shipped with no caller, so the empty state's
+ * advice to add the first budget could not be followed from anywhere in the app.
+ */
+describe('Budgets — setting one', () => {
+  let api: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn> };
+  let session: { role: ReturnType<typeof signal<string | null>> };
+  let fixture: ComponentFixture<Budgets>;
+  /** Budget rows the org already has; drives which categories are offered. */
+  let existingBudgets: unknown[];
+
+  const host = () => fixture.nativeElement as HTMLElement;
+  const text = () => host().textContent ?? '';
+  const form = () => host().querySelector('form');
+  const amountInput = () => host().querySelector('input[type="number"]') as HTMLInputElement;
+
+  function setAmount(value: string): void {
+    const input = amountInput();
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+  }
+
+  function submit(): void {
+    form()!.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    fixture.detectChanges();
+  }
+
+  async function create(role: string | null = 'owner'): Promise<void> {
+    session.role.set(role);
+    fixture = TestBed.createComponent(Budgets);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  beforeEach(() => {
+    api = {
+      get: vi.fn().mockImplementation(async (path: string) => {
+        if (path === '/orgs/current/categories') {
+          return [
+            { id: 'cat-travel', orgId: 'org-1', name: 'Travel', icon: null, isDefault: true },
+            { id: 'cat-meals', orgId: 'org-1', name: 'Meals', icon: null, isDefault: true },
+          ];
+        }
+        if (path === '/budgets') return existingBudgets;
+        return HEALTHY;
+      }),
+      post: vi.fn().mockResolvedValue({ id: 'b1' }),
+    };
+    session = { role: signal<string | null>('owner') };
+    existingBudgets = [];
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiClient, useValue: api },
+        { provide: Session, useValue: session },
+      ],
+    });
+  });
+
+  it('offers the form to an owner', async () => {
+    await create('owner');
+    expect(form()).not.toBeNull();
+    expect(text()).toContain('Set a budget');
+  });
+
+  /** Mirrors @Roles('owner','admin') on the route. The server still enforces it. */
+  it('hides the form from a member rather than letting them hit a 403', async () => {
+    await create('member');
+    expect(form()).toBeNull();
+  });
+
+  it('lists the org’s categories, plus an org-wide option', async () => {
+    await create();
+    const options = Array.from(host().querySelectorAll('select option')).map((o) => o.textContent?.trim());
+    expect(options).toContain('All categories');
+    expect(options).toContain('Travel');
+  });
+
+  /**
+   * `POST /api/budgets` inserts, and a unique index makes a second one a 409.
+   * Offering a category that already has one would be a guaranteed failure —
+   * the same rule the expense action buttons follow.
+   */
+  it('does not offer a category that already has a budget', async () => {
+    existingBudgets = [
+      { id: 'b1', orgId: 'org-1', categoryId: 'cat-travel', amount: 60000, period: 'monthly', rollover: false },
+    ];
+    await create();
+
+    const options = Array.from(host().querySelectorAll('select option')).map((o) => o.textContent?.trim());
+    expect(options).not.toContain('Travel');
+    expect(options).toContain('Meals');
+  });
+
+  it('drops the org-wide option once an org-wide budget exists', async () => {
+    existingBudgets = [
+      { id: 'b1', orgId: 'org-1', categoryId: null, amount: 180000, period: 'monthly', rollover: false },
+    ];
+    await create();
+
+    const options = Array.from(host().querySelectorAll('select option')).map((o) => o.textContent?.trim());
+    expect(options).not.toContain('All categories');
+  });
+
+  it('says so, rather than showing an empty dropdown, when nothing is left to budget', async () => {
+    existingBudgets = [
+      { id: 'b1', orgId: 'org-1', categoryId: null, amount: 1, period: 'monthly', rollover: false },
+      { id: 'b2', orgId: 'org-1', categoryId: 'cat-travel', amount: 1, period: 'monthly', rollover: false },
+      { id: 'b3', orgId: 'org-1', categoryId: 'cat-meals', amount: 1, period: 'monthly', rollover: false },
+    ];
+    await create();
+
+    expect(host().querySelector('form')).toBeNull();
+    expect(text()).toContain('Every category already has a budget');
+  });
+
+  it('explains a 409 in terms of what the API actually does', async () => {
+    await create();
+    api.post.mockRejectedValue(new ApiError('Budget already exists.', 409, null));
+
+    setAmount('10000');
+    submit();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(text()).toContain('already has a budget');
+  });
+
+  it('posts the budget and reloads the figures from the server', async () => {
+    await create();
+    const fetchesBefore = api.get.mock.calls.filter((c) => c[0] === '/budgets/status').length;
+
+    setAmount('10000');
+    submit();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(api.post).toHaveBeenCalledWith('/budgets', {
+      categoryId: null,
+      amount: 10000,
+      period: 'monthly',
+      rollover: false,
+    });
+    // The bars are server-computed, so they have to come back from it.
+    const fetchesAfter = api.get.mock.calls.filter((c) => c[0] === '/budgets/status').length;
+    expect(fetchesAfter).toBeGreaterThan(fetchesBefore);
+  });
+
+  it('sends the chosen category rather than the empty org-wide value', async () => {
+    await create();
+    const select = host().querySelector('select') as HTMLSelectElement;
+    select.value = 'cat-travel';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+
+    setAmount('4000');
+    submit();
+    await fixture.whenStable();
+
+    expect(api.post.mock.calls[0][1]).toMatchObject({ categoryId: 'cat-travel' });
+  });
+
+  it('refuses a non-positive amount without calling the API', async () => {
+    await create();
+    setAmount('0');
+    submit();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(api.post).not.toHaveBeenCalled();
+    expect(text()).toContain('greater than zero');
+  });
+
+  it('says so, without blaming, when the save fails', async () => {
+    await create();
+    api.post.mockRejectedValue(new ApiError('Forbidden', 403, null));
+
+    setAmount('10000');
+    submit();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(text()).toContain('Only an owner or admin can set a budget.');
+  });
+
+  /** A missing category list must not block the org-wide budget. */
+  it('still renders the form when categories fail to load', async () => {
+    api.get.mockImplementation(async (path: string) => {
+      if (path === '/orgs/current/categories') throw new ApiError('nope', 500, null);
+      if (path === '/budgets') return [];
+      return HEALTHY;
+    });
+    await create();
+
+    expect(form()).not.toBeNull();
   });
 });

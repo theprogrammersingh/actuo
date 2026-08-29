@@ -1,19 +1,46 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiClient } from '../../core/api/api-client.js';
+import { Session } from '../../core/session/session.js';
+import { ToolCallAudit } from '../../webmcp/tool-call-audit.js';
 import { AddExpense } from './add-expense.js';
 
 describe('AddExpense (declarative WebMCP surface)', () => {
   let fixture: ComponentFixture<AddExpense>;
   let api: { post: ReturnType<typeof vi.fn> };
+  let audit: { record: ReturnType<typeof vi.fn> };
+  let session: { refreshPendingApprovals: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     api = { post: vi.fn().mockResolvedValue({ id: 'exp-1', amount: 450, currency: 'INR', merchant: 'Barista', status: 'draft' }) };
+    audit = { record: vi.fn() };
+    session = { refreshPendingApprovals: vi.fn().mockResolvedValue(0) };
     TestBed.resetTestingModule();
-    TestBed.configureTestingModule({ providers: [{ provide: ApiClient, useValue: api }] });
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiClient, useValue: api },
+        { provide: ToolCallAudit, useValue: audit },
+        { provide: Session, useValue: session },
+      ],
+    });
     fixture = TestBed.createComponent(AddExpense);
     fixture.detectChanges();
   });
+
+  /** Dispatches a submit, optionally as an agent would. */
+  function submit(agentInvoked = false): Promise<unknown> | null {
+    const event = new Event('submit', { cancelable: true, bubbles: true }) as Event & {
+      agentInvoked?: boolean;
+      respondWith?: (r: Promise<unknown>) => void;
+    };
+    let responded: Promise<unknown> | null = null;
+    if (agentInvoked) {
+      event.agentInvoked = true;
+      event.respondWith = (result) => (responded = result);
+    }
+    form().dispatchEvent(event);
+    return responded;
+  }
 
   const form = () => fixture.nativeElement.querySelector('form') as HTMLFormElement;
 
@@ -105,6 +132,52 @@ describe('AddExpense (declarative WebMCP surface)', () => {
 
     await expect(responded!).rejects.toThrow('Amount must be greater than 0');
     expect(fixture.nativeElement.textContent).toContain('Amount must be greater than 0');
+  });
+
+  /**
+   * This form is the only tool call a person can make — every other tool goes
+   * through `ToolRegistry`, which is always an agent. Without this row the
+   * audit viewer's "Human" filter is permanently empty and the human/agent
+   * contrast it exists to draw has nothing to draw it with.
+   */
+  describe('audit trail', () => {
+    it('records a form submit as a human action', async () => {
+      submit();
+      await fixture.whenStable();
+
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actor: 'human', toolName: 'add_expense_form' }),
+      );
+    });
+
+    it('records the same submit as an agent action when the agent made it', async () => {
+      submit(true);
+      await fixture.whenStable();
+
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actor: 'agent', toolName: 'add_expense_form' }),
+      );
+    });
+
+    it('does not log a save that failed', async () => {
+      api.post.mockRejectedValue(new Error('Amount must be greater than 0'));
+
+      submit();
+      await fixture.whenStable();
+
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A new expense can be submitted for approval, which is exactly what the
+     * state-gated `approve_expense` tool watches.
+     */
+    it('re-checks the pending approval queue after a save', async () => {
+      submit();
+      await fixture.whenStable();
+
+      expect(session.refreshPendingApprovals).toHaveBeenCalled();
+    });
   });
 
   it('works without the declarative feature present, taking the human path', async () => {

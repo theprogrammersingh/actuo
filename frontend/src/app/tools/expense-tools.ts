@@ -85,6 +85,14 @@ export class ExpenseTools {
           remaining: status.remaining,
           utilization: `${Math.round(status.utilization * 100)}%`,
           overBudget: status.utilization > 1,
+          /*
+           * Passed through so the model can qualify the figure instead of
+           * stating a partial total as a complete one. `spent` excludes
+           * expenses filed in other currencies, because nothing converts them
+           * yet (PRD §6.5) — the system prompt tells the Copilot never to
+           * invent figures, and this is the field that lets it be accurate.
+           */
+          expensesNotCountedOtherCurrency: status.unconvertedCount,
         }));
       },
     };

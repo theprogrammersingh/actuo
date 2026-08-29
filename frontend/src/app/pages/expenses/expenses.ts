@@ -9,12 +9,21 @@ import {
   signal,
 } from '@angular/core';
 import { EXPENSE_PAGE_MAX } from '@actuo/shared';
-import type { Expense, Page } from '@actuo/shared';
+import type { Expense, Page, TransitionAction } from '@actuo/shared';
 
-import { ApiClient } from '../../core/api/api-client.js';
+import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Badge, Button, EmptyState, ErrorState, Input, Skeleton } from '../../ui';
 import { formatDate, formatMoney } from '../../core/format/money.js';
-import { expenseAmount } from '../../core/expense/amount.js';
+import { expenseAmount, expenseCurrency } from '../../core/expense/amount.js';
+import { Session } from '../../core/session/session.js';
+import {
+  ACTION_LABEL,
+  actionPath,
+  availableActions,
+  describeAction,
+  mayEdit,
+  takesComment,
+} from '../../core/expense/expense-actions.js';
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
@@ -169,6 +178,9 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                     <span aria-hidden="true">{{ sortArrow('amount') }}</span>
                   </button>
                 </th>
+                <th scope="col" class="px-4 py-3 text-right">
+                  <span class="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody class="divide-y divide-line">
@@ -191,6 +203,82 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                     data-money
                   >
                     {{ amountText(row) }}
+                  </td>
+                  <td class="px-4 py-3 text-right align-top">
+                <!--
+                  Only the actions the server would accept, from the same tables
+                  it enforces with (see availableActions). A button that is
+                  certain to 403 is worse than no button.
+                -->
+                <div class="flex flex-wrap items-center justify-end gap-1.5">
+                  @for (action of actionsFor(row); track action) {
+                    <button
+                      uiButton
+                      type="button"
+                      size="sm"
+                      [variant]="action === 'reject' ? 'danger' : 'secondary'"
+                      [loading]="busyRow() === row.id"
+                      (click)="onAction(row, action)"
+                    >
+                      {{ actionLabel[action] }}
+                    </button>
+                  }
+                  @if (canDelete(row)) {
+                    <button
+                      uiButton
+                      type="button"
+                      size="sm"
+                      [variant]="armedDelete() === row.id ? 'danger' : 'ghost'"
+                      [loading]="busyRow() === row.id"
+                      (click)="onDelete(row)"
+                      (blur)="disarmDelete()"
+                    >
+                      {{ armedDelete() === row.id ? 'Confirm delete' : 'Delete' }}
+                    </button>
+                  }
+                </div>
+
+                <!-- The decision comment: optional, and inline so the row keeps context. -->
+                @for (action of actionsFor(row); track action) {
+                  @if (takesComment(action) && isCommenting(row.id, action)) {
+                    <div class="mt-2 rounded-lg border border-line bg-surface p-3 text-left">
+                      <label
+                        [attr.for]="'comment-' + row.id"
+                        class="mb-1.5 block text-xs font-medium text-body"
+                      >
+                        Add a note (optional)
+                      </label>
+                      <textarea
+                        [id]="'comment-' + row.id"
+                        rows="2"
+                        class="block w-full rounded-lg border border-line bg-card px-3 py-2 text-sm
+                               text-body focus-visible:outline-2 focus-visible:-outline-offset-1
+                               focus-visible:outline-brand-teal"
+                        [value]="comment()"
+                        (input)="comment.set($any($event.target).value)"
+                      ></textarea>
+                      <div class="mt-2 flex justify-end gap-2">
+                        <button uiButton type="button" size="sm" variant="ghost" (click)="cancelComment()">
+                          Cancel
+                        </button>
+                        <button
+                          uiButton
+                          type="button"
+                          size="sm"
+                          [variant]="action === 'reject' ? 'danger' : 'primary'"
+                          [loading]="busyRow() === row.id"
+                          (click)="onAction(row, action)"
+                        >
+                          {{ actionLabel[action] }}
+                        </button>
+                      </div>
+                    </div>
+                  }
+                }
+
+                @if (errorFor(row.id); as message) {
+                  <p class="mt-2 text-left text-xs text-status-danger" role="status">{{ message }}</p>
+                }
                   </td>
                 </tr>
               }
@@ -218,9 +306,84 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                 <p class="mt-2 text-sm text-muted">{{ row.note }}</p>
               }
 
-              <div class="mt-3">
+              <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <ui-badge [status]="row.status" />
               </div>
+
+                <!--
+                  Only the actions the server would accept, from the same tables
+                  it enforces with (see availableActions). A button that is
+                  certain to 403 is worse than no button.
+                -->
+                <div class="flex flex-wrap items-center justify-end gap-1.5">
+                  @for (action of actionsFor(row); track action) {
+                    <button
+                      uiButton
+                      type="button"
+                      size="sm"
+                      [variant]="action === 'reject' ? 'danger' : 'secondary'"
+                      [loading]="busyRow() === row.id"
+                      (click)="onAction(row, action)"
+                    >
+                      {{ actionLabel[action] }}
+                    </button>
+                  }
+                  @if (canDelete(row)) {
+                    <button
+                      uiButton
+                      type="button"
+                      size="sm"
+                      [variant]="armedDelete() === row.id ? 'danger' : 'ghost'"
+                      [loading]="busyRow() === row.id"
+                      (click)="onDelete(row)"
+                      (blur)="disarmDelete()"
+                    >
+                      {{ armedDelete() === row.id ? 'Confirm delete' : 'Delete' }}
+                    </button>
+                  }
+                </div>
+
+                <!-- The decision comment: optional, and inline so the row keeps context. -->
+                @for (action of actionsFor(row); track action) {
+                  @if (takesComment(action) && isCommenting(row.id, action)) {
+                    <div class="mt-2 rounded-lg border border-line bg-surface p-3 text-left">
+                      <label
+                        [attr.for]="'comment-' + row.id"
+                        class="mb-1.5 block text-xs font-medium text-body"
+                      >
+                        Add a note (optional)
+                      </label>
+                      <textarea
+                        [id]="'comment-' + row.id"
+                        rows="2"
+                        class="block w-full rounded-lg border border-line bg-card px-3 py-2 text-sm
+                               text-body focus-visible:outline-2 focus-visible:-outline-offset-1
+                               focus-visible:outline-brand-teal"
+                        [value]="comment()"
+                        (input)="comment.set($any($event.target).value)"
+                      ></textarea>
+                      <div class="mt-2 flex justify-end gap-2">
+                        <button uiButton type="button" size="sm" variant="ghost" (click)="cancelComment()">
+                          Cancel
+                        </button>
+                        <button
+                          uiButton
+                          type="button"
+                          size="sm"
+                          [variant]="action === 'reject' ? 'danger' : 'primary'"
+                          [loading]="busyRow() === row.id"
+                          (click)="onAction(row, action)"
+                        >
+                          {{ actionLabel[action] }}
+                        </button>
+                      </div>
+                    </div>
+                  }
+                }
+
+                @if (errorFor(row.id); as message) {
+                  <p class="mt-2 text-left text-xs text-status-danger" role="status">{{ message }}</p>
+                }
             </li>
           }
         </ul>
@@ -258,10 +421,128 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
 })
 export class Expenses {
   private readonly api = inject(ApiClient);
+  private readonly session = inject(Session);
   private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 
   protected readonly statusOptions = STATUS_OPTIONS;
   protected readonly formatDate = formatDate;
+  protected readonly actionLabel = ACTION_LABEL;
+  protected readonly takesComment = takesComment;
+
+  // --- workflow actions ----------------------------------------------------
+
+  /**
+   * Rows changed since the last fetch, keyed by id.
+   *
+   * An action patches the row here rather than reloading the page. Reloading
+   * after approving one of forty rows would discard every `Load more` page and
+   * the scroll position, which is a worse outcome than a slightly stale total.
+   */
+  private readonly patched = signal<Readonly<Record<string, Expense>>>({});
+
+  /** Which row has its comment panel open, and for which decision. */
+  protected readonly openAction = signal<{ id: string; action: TransitionAction } | null>(null);
+  protected readonly comment = signal('');
+  /** Row id whose Delete has been armed — the second click confirms. */
+  protected readonly armedDelete = signal<string | null>(null);
+  /** Row id with an action in flight, so its buttons can show a busy state. */
+  protected readonly busyRow = signal<string | null>(null);
+  protected readonly rowError = signal<{ id: string; message: string } | null>(null);
+
+  private readonly actor = computed(() => ({
+    role: this.session.role(),
+    userId: this.session.user()?.id ?? null,
+  }));
+
+  protected actionsFor(expense: Expense): TransitionAction[] {
+    return availableActions(expense, this.actor());
+  }
+
+  protected canDelete(expense: Expense): boolean {
+    return mayEdit(expense, this.actor());
+  }
+
+  protected errorFor(id: string): string | null {
+    const error = this.rowError();
+    return error?.id === id ? error.message : null;
+  }
+
+  protected isCommenting(id: string, action: TransitionAction): boolean {
+    const open = this.openAction();
+    return open?.id === id && open.action === action;
+  }
+
+  /**
+   * A decision opens an inline comment panel; everything else runs straight
+   * away. Deliberately not a modal — there is no Dialog in the design system,
+   * and a full-screen overlay to type one optional sentence is heavier than the
+   * decision deserves.
+   */
+  protected onAction(expense: Expense, action: TransitionAction): void {
+    this.rowError.set(null);
+    if (takesComment(action) && !this.isCommenting(expense.id, action)) {
+      this.comment.set('');
+      this.openAction.set({ id: expense.id, action });
+      return;
+    }
+    void this.run(expense, action, takesComment(action) ? this.comment().trim() : '');
+  }
+
+  protected cancelComment(): void {
+    this.openAction.set(null);
+    this.comment.set('');
+  }
+
+  /** Two-step, in place: the first click arms, the second deletes. */
+  protected onDelete(expense: Expense): void {
+    this.rowError.set(null);
+    if (this.armedDelete() !== expense.id) {
+      this.armedDelete.set(expense.id);
+      return;
+    }
+    void this.remove(expense);
+  }
+
+  protected disarmDelete(): void {
+    this.armedDelete.set(null);
+  }
+
+  private async run(expense: Expense, action: TransitionAction, comment: string): Promise<void> {
+    this.busyRow.set(expense.id);
+    try {
+      const updated = await this.api.post<Expense>(
+        actionPath(expense.id, action),
+        comment ? { comment } : {},
+      );
+      this.patched.update((rows) => ({ ...rows, [updated.id]: updated }));
+      this.openAction.set(null);
+      this.comment.set('');
+      // A decision changes the approval queue, which is what gates the
+      // `approve_expense` WebMCP tool.
+      void this.session.refreshPendingApprovals();
+    } catch (error) {
+      this.rowError.set({ id: expense.id, message: describeFailure(error, action) });
+    } finally {
+      this.busyRow.set(null);
+    }
+  }
+
+  private async remove(expense: Expense): Promise<void> {
+    this.busyRow.set(expense.id);
+    try {
+      await this.api.delete(`/expenses/${expense.id}`);
+      this.patched.update((rows) => ({
+        ...rows,
+        [expense.id]: { ...expense, deletedAt: new Date().toISOString() },
+      }));
+      this.armedDelete.set(null);
+      void this.session.refreshPendingApprovals();
+    } catch (error) {
+      this.rowError.set({ id: expense.id, message: describeFailure(error, 'delete') });
+    } finally {
+      this.busyRow.set(null);
+    }
+  }
 
   // --- table state ---------------------------------------------------------
 
@@ -305,11 +586,19 @@ export class Expenses {
     return error instanceof Error ? error.message : null;
   });
 
-  /** Everything fetched so far: the first page plus any appended pages. */
-  private readonly expenses = computed(() => [
-    ...(this.loaded()?.items ?? []),
-    ...this.extraPages(),
-  ]);
+  /**
+   * Everything fetched so far — the first page plus any appended pages — with
+   * locally-applied action results layered on top and soft-deleted rows dropped.
+   *
+   * Layering rather than refetching is what lets an approval land without
+   * discarding the pages a user has already loaded.
+   */
+  private readonly expenses = computed(() => {
+    const patched = this.patched();
+    return [...(this.loaded()?.items ?? []), ...this.extraPages()]
+      .map((row) => patched[row.id] ?? row)
+      .filter((row) => row.deletedAt === null);
+  });
 
   /** How many rows exist server-side, which is what makes `Load more` honest. */
   protected readonly loadedCount = computed(() => this.expenses().length);
@@ -394,11 +683,44 @@ export class Expenses {
     this.status.set(DEFAULT_FILTER.status);
   }
 
+  /**
+   * Printed in the currency the value is actually in.
+   *
+   * This used to reach for `baseCurrency` first, which meant an expense filed
+   * in USD — with no converted amount, because there is no FX pass yet
+   * (PRD §6.5) — rendered its raw dollar figure under the org's ₹ symbol.
+   */
   protected amountText(expense: Expense): string {
-    return formatMoney(expenseAmount(expense), expense.baseCurrency || expense.currency);
+    return formatMoney(expenseAmount(expense), expenseCurrency(expense));
   }
 
   reload(): void {
+    this.patched.set({});
+    this.rowError.set(null);
     this.data.reload();
   }
+}
+
+/**
+ * Why an action failed, in copy a person can act on.
+ *
+ * The 409 case is the one worth spelling out: the state machine returns it when
+ * the row moved under you — a double-click, or two approvers racing — and
+ * "conflict" tells the user nothing about what to do next.
+ */
+function describeFailure(error: unknown, action: TransitionAction | 'delete'): string {
+  const verb = action === 'delete' ? 'delete' : describeAction(action);
+  if (error instanceof ApiError) {
+    if (error.status === 409) {
+      return `Someone else changed this expense first, so it can’t be ${
+        action === 'delete' ? 'deleted' : `${verb}d`
+      } now. Refresh to see where it stands.`;
+    }
+    if (error.status === 403) return `You’re not allowed to ${verb} this expense.`;
+    if (error.status === 0) {
+      return `Actuo didn’t respond, so nothing was changed. Try again.`;
+    }
+    if (error.message) return error.message;
+  }
+  return `Could not ${verb} this expense. Nothing was changed.`;
 }

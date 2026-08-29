@@ -13,6 +13,7 @@ import type { BudgetStatus, Expense, Organization, Page } from '@actuo/shared';
 import { ApiClient } from '../../core/api/api-client.js';
 import { Card, EmptyState, ErrorState, Skeleton, StatCard } from '../../ui';
 import { formatDay, formatMoney } from '../../core/format/money.js';
+import { excludedNotice, expenseCurrency } from '../../core/expense/amount.js';
 import {
   barGeometry,
   computeSpendPace,
@@ -21,6 +22,7 @@ import {
   pendingCount,
   recentActivity,
   spendWindow,
+  sumSpend,
   totalForMonth,
   type PaceStatus,
 } from './spend-pace.js';
@@ -143,6 +145,16 @@ const PACE_LABEL: Record<PaceStatus, string> = {
             [hint]="pendingHint()"
           />
         </div>
+
+        <!--
+          Stated, not hidden. Every figure above counts base-currency rows only,
+          because there is no FX pass yet (PRD §6.5) — the alternative was adding
+          dollars to rupees at 1:1 and calling the result a total. Muted, not a
+          status colour: this is information about the figures, not an alarm.
+        -->
+        @if (excludedNote(); as note) {
+          <p class="mt-3 text-xs text-muted" role="status">{{ note }}</p>
+        }
 
         <div class="mt-6 grid gap-4 lg:grid-cols-5">
           <div class="lg:col-span-3">
@@ -285,9 +297,20 @@ export class Dashboard {
 
   // --- figures -------------------------------------------------------------
 
-  private readonly monthSpend = computed(() => totalForMonth(this.expenses(), this.window.month));
-  private readonly lastMonthSpend = computed(() =>
-    totalForMonth(this.expenses(), this.window.previousMonth),
+  private readonly monthSpend = computed(
+    () => totalForMonth(this.expenses(), this.window.month).total,
+  );
+  private readonly lastMonthSpend = computed(
+    () => totalForMonth(this.expenses(), this.window.previousMonth).total,
+  );
+
+  /**
+   * How many rows on this page could not be totalled, across the whole fetched
+   * window — which is exactly what the tiles and the trend report on. One
+   * notice for the screen beats repeating the caveat on every tile.
+   */
+  protected readonly excludedNote = computed(() =>
+    excludedNotice(sumSpend(this.expenses()).excluded),
   );
 
   protected readonly hasBudgets = computed(() => this.budgets().length > 0);
@@ -383,8 +406,10 @@ export class Dashboard {
   protected readonly pendingHint = computed(() => {
     const submitted = this.expenses().filter((expense) => expense.status === 'submitted');
     if (submitted.length === 0) return 'Nothing waiting on a decision.';
-    const total = submitted.reduce((sum, expense) => sum + expenseAmount(expense), 0);
-    return `${formatMoney(total, this.currency())} awaiting a decision`;
+    const { total, excluded } = sumSpend(submitted);
+    const awaiting = `${formatMoney(total, this.currency())} awaiting a decision`;
+    // A bare figure here would understate the queue without saying so.
+    return excluded > 0 ? `${awaiting} (+${excluded} in other currencies)` : awaiting;
   });
 
   // --- trend ---------------------------------------------------------------
@@ -442,8 +467,13 @@ export class Dashboard {
 
   protected readonly activity = computed(() => recentActivity(this.expenses(), ACTIVITY_LIMIT));
 
+  /**
+   * A row is printed in the currency its value is actually in. Labelling an
+   * unconverted $50 with the org's ₹ symbol is not a rounding error, it is a
+   * different number by a factor of ~90.
+   */
   protected amountText(expense: Expense): string {
-    return formatMoney(expenseAmount(expense), expense.baseCurrency || this.currency());
+    return formatMoney(expenseAmount(expense), expenseCurrency(expense) || this.currency());
   }
 
   protected statusLabel(expense: Expense): string {

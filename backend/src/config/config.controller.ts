@@ -24,6 +24,13 @@ export interface ClientConfig {
   defaultGeminiModel: string;
   baseCurrency: string;
   currencies: readonly string[];
+  /**
+   * Origin serving the WebMCP partner-demo page. The `/agent` screen embeds it
+   * and asks `getTools({fromOrigins: [partnerOrigin]})` for its tools, so this
+   * must differ from the app's own origin for the cross-origin demo to mean
+   * anything — see `EnvService.partnerOrigin`.
+   */
+  partnerOrigin: string;
 }
 
 /**
@@ -67,6 +74,7 @@ export class ConfigController {
       defaultGeminiModel: 'gemini-3-flash',
       baseCurrency: this.env.baseCurrency,
       currencies: CURRENCIES,
+      partnerOrigin: this.env.partnerOrigin,
     };
   }
 }

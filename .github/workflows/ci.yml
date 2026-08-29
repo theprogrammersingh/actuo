@@ -1,0 +1,69 @@
+# The Definition of Done gate from Progress.md, run on every push and PR.
+#
+# It is the same five commands, in the same order, for the same reasons — each
+# one is here because skipping it caused a real failure in this repository:
+#
+#   typecheck   catches what the test build tolerates
+#   test        shared + backend unit + frontend
+#   test:e2e    a SEPARATE vitest config; `pnpm test` does not include it, and a
+#               change was once committed on unit tests alone that broke an e2e
+#               spec pinning the same data
+#   build       catches SSR prerender failures and template type errors
+#
+# No secrets are needed. `EnvService` raises `MissingEnvError` at call time
+# rather than import time precisely so the app boots, serves /api/health and
+# /api/config, and runs its e2e suite without any credentials — which is what
+# makes this workflow possible at all.
+
+name: CI
+
+on:
+  pull_request:
+
+concurrency:
+  # A new push supersedes the run it interrupted; nothing here is worth
+  # finishing for a commit that is already stale.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Definition of Done
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No version pin here: the root package.json `packageManager` field is the
+      # single source of truth, and duplicating it is how the two drift.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # `--frozen-lockfile` is the CI equivalent of `npm ci`: it fails rather
+      # than silently resolving a dependency the lockfile does not name.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `shared` must be built before either consumer, or both fail at once with
+      # TS2307. `pnpm test` does not build it.
+      - name: Build shared
+        run: pnpm run build:shared
+
+      - name: Typecheck
+        run: |
+          pnpm --filter backend exec tsc --noEmit -p tsconfig.json
+          pnpm --filter frontend exec tsc --noEmit -p tsconfig.app.json
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: End-to-end tests
+        run: pnpm run test:e2e
+
+      - name: Build
+        run: pnpm run build

@@ -1,0 +1,20 @@
+{
+  "apphosting": [
+    {
+      "backendId": "actuo",
+      "rootDir": "/",
+      "ignore": [
+        "node_modules",
+        "**/node_modules",
+        ".git",
+        ".angular",
+        "dist",
+        "**/dist",
+        "**/*.log",
+        "firebase-debug.*.log",
+        "coverage",
+        "**/coverage"
+      ]
+    }
+  ]
+}

@@ -23,6 +23,9 @@ export interface ToolInvocation {
   error?: string;
 }
 
+/** Notified after every invocation, successful or not. */
+export type ToolInvocationObserver = (invocation: ToolInvocation) => void;
+
 /**
  * The single source of truth for Actuo's WebMCP tools.
  *
@@ -56,6 +59,9 @@ export class ToolRegistry {
   private readonly tools = new Map<string, ActuoTool<never>>();
   /** Controls the lifetime of each WebMCP registration (abort = unregister). */
   private readonly registrations = new Map<string, AbortController>();
+
+  /** Side-effects that hang off every invocation — see {@link observe}. */
+  private readonly observers = new Set<ToolInvocationObserver>();
 
   private readonly registered = signal<readonly string[]>([]);
   private readonly discovered = signal<readonly NormalizedTool[]>([]);
@@ -136,6 +142,29 @@ export class ToolRegistry {
 
   has(name: string): boolean {
     return this.tools.has(name);
+  }
+
+  /**
+   * Subscribe to every invocation this registry runs. Returns an unsubscribe.
+   *
+   * This is the seam the audit trail and the pending-approval poll hang off.
+   * It lives here because `log()` is the one place *every* call passes through
+   * — the Copilot's, an external browser agent's (WebMCP's `execute` callback
+   * funnels back into `invoke()`), and cross-origin ones — so a subscriber
+   * cannot miss a category of caller.
+   *
+   * Kept as a callback rather than an injected service on purpose: the
+   * registry stays free of HTTP and session dependencies, and its unit tests
+   * need no fakes for either.
+   */
+  observe(observer: ToolInvocationObserver): () => void {
+    this.observers.add(observer);
+    return () => this.observers.delete(observer);
+  }
+
+  /** Whether a tool changes state — false for anything carrying `readOnlyHint`. */
+  isMutating(name: string): boolean {
+    return this.tools.get(name)?.contract.annotations.readOnlyHint !== true;
   }
 
   getContract(name: string): ActuoToolContract | undefined {
@@ -273,6 +302,17 @@ export class ToolRegistry {
 
   private log(invocation: ToolInvocation): void {
     this.invocations.update((entries) => [...entries, invocation].slice(-100));
+
+    for (const observer of this.observers) {
+      try {
+        observer(invocation);
+      } catch (error) {
+        // An observer describes a call; it must never be able to fail one.
+        // Same reasoning as the backend's `appendQuietly`: turning the audit
+        // trail into a new failure mode is worse than having no audit trail.
+        console.warn('[webmcp] tool invocation observer threw', error);
+      }
+    }
   }
 }
 

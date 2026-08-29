@@ -1,0 +1,102 @@
+# Firebase App Hosting — the combined single-process deploy (PRD §8.1, §12).
+#
+# Nothing here is left to framework auto-detection. App Hosting infers a build
+# and start command from the framework it thinks it sees, and this repository is
+# a pnpm workspace with three packages and no framework at its root — so both
+# commands are stated outright. That also sidesteps firebase-tools#7478 (pnpm
+# workspace lockfile discovery), which reproduces when the app lives in a
+# subdirectory; `rootDir: "/"` in firebase.json keeps pnpm-workspace.yaml and
+# pnpm-lock.yaml at the root of the build workspace, where the installer looks.
+
+runConfig:
+  cpu: 1
+  memoryMiB: 1024
+  # Scale to zero between demos; the cold start is a Nest boot, not a build.
+  minInstances: 0
+  maxInstances: 2
+  concurrency: 40
+
+scripts:
+  # shared -> backend -> frontend, in that order. A missing shared/dist shows up
+  # as TS2307 in both consumers at once.
+  buildCommand: pnpm run build
+  # The composed process: Nest owns /api/*, the Angular SSR handler takes the
+  # rest. See server.mjs, and backend/test/routing-contract.e2e-spec.ts for the
+  # contract it depends on.
+  runCommand: node server.mjs
+
+env:
+  # Marks this as the deployed environment. EnvService reads it to decide that
+  # PARTNER_DEMO_ORIGIN has no localhost default here — otherwise /agent would
+  # embed an iframe pointing at each visitor's own machine.
+  - variable: NODE_ENV
+    value: production
+    availability: [BUILD, RUNTIME]
+
+  # Angular 21 refuses to server-render a request whose Host header is not on an
+  # allowlist (SSRF protection). Off the allowlist it does NOT fail loudly — it
+  # silently falls back to client-side rendering, which would quietly undo the
+  # SSR and structured-data work in PRD §8.5, and the Angular team have said it
+  # becomes a hard 400 in a future major.
+  #
+  # This REPLACES the build-time list in angular.json rather than adding to it
+  # (`getAllowedHostsFromEnv() ?? options.allowedHosts`), so everything the
+  # deployed service answers on has to be here. The two wildcards cover the
+  # default App Hosting domain (<backend>--<project>.<region>.hosted.app) and
+  # the underlying Cloud Run URL. Narrow this to the exact hostname once the
+  # backend exists, and add any custom domain.
+  #
+  # Verify after a deploy: the HTML for `/` must contain `ng-server-context`.
+  # If it does not, this value is wrong and the site is rendering client-side.
+  - variable: NG_ALLOWED_HOSTS
+    value: "*.web.app,*.run.app,*.firebaseapp.com,*.programmersingh.dev"
+    availability: [RUNTIME]
+
+  # The Supabase project URL is not a credential; the service-role key below is.
+  - variable: SUPABASE_URL
+    value: https://dfzgtalbqtcadgupwklo.supabase.co
+    availability: [RUNTIME]
+
+  # --- Secrets ------------------------------------------------------------
+  #
+  # RUNTIME only: the build never touches Supabase or signs a token, and a
+  # secret readable at build time is a secret in the build logs.
+  #
+  # EnvService raises MissingEnvError at *call* time rather than import time, so
+  # a missing or misconfigured secret surfaces as a failure on the routes that
+  # need it — not as a container that will not start and cannot be inspected.
+  #
+  # Create each one with:  firebase apphosting:secrets:set <name>
+  - variable: SUPABASE_SERVICE_ROLE_KEY
+    secret: actuo-supabase-service-role-key
+    availability: [RUNTIME]
+  - variable: JWT_ACCESS_SECRET
+    secret: actuo-jwt-access-secret
+    availability: [RUNTIME]
+  - variable: JWT_REFRESH_SECRET
+    secret: actuo-jwt-refresh-secret
+    availability: [RUNTIME]
+
+  # The public origin, stamped into sitemap.xml, robots.txt and the og: tags by
+  # scripts/stamp-seo.mjs at build time. BUILD availability, not RUNTIME: the
+  # public pages are prerendered, so there is no request to derive an origin
+  # from and the value has to be present while the build runs.
+  #
+  # Unset, every URL stays root-relative — valid, but the sitemap is not
+  # spec-compliant and scrapers may not resolve og:image. Set it to the
+  # backend's real hostname.
+  - variable: PUBLIC_ORIGIN
+    value: "actuo.programmersingh.dev"
+    availability: [BUILD]
+
+  # --- Optional, with sane defaults in EnvService --------------------------
+  - variable: BASE_CURRENCY
+    value: INR
+    availability: [RUNTIME]
+
+  # PARTNER_DEMO_ORIGIN is deliberately absent. It must be an origin that is NOT
+  # this app's, or the cross-origin demo proves nothing — /agent explains that
+  # when it is unset. Set it once the partner page has a host of its own.
+
+# NOTE: PORT is injected by Cloud Run and must not be set here. server.mjs reads
+# it and falls back to 8080.

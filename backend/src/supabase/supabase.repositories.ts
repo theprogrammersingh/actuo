@@ -13,6 +13,7 @@ import type {
   ExpenseStatus,
   Membership,
   Organization,
+  AuditLogEntry,
   Page,
   Role,
   ToolCallLogEntry,
@@ -28,6 +29,7 @@ import type {
   CreateExpenseInput,
   ExpenseQuery,
   ExpenseRepository,
+  ListAuditQuery,
   OrgMember,
   OrgRepository,
   RefreshTokenRecord,
@@ -345,7 +347,7 @@ export class SupabaseExpenseRepository implements ExpenseRepository {
     const { data, error } = await this.supabase
       .getClient()
       .from('expenses')
-      .select('category_id, converted_amount, amount')
+      .select('category_id, converted_amount')
       .eq('org_id', orgId)
       .is('deleted_at', null)
       // Rejected spend is not spend. Drafts are not committed either.
@@ -354,15 +356,31 @@ export class SupabaseExpenseRepository implements ExpenseRepository {
       .lte('expense_date', to);
     if (error) fail(error, 'Budget rollup');
 
-    const totals = new Map<string | null, number>();
+    /*
+     * Only `converted_amount` counts, and rows without one are counted, not
+     * summed.
+     *
+     * This used to fall back to the raw `amount`, on the reasoning that a
+     * slightly wrong number beat a budget bar reading zero. That was wrong:
+     * `converted_amount` is written only when the expense is already in the
+     * base currency (PRD §6.5 — there is no FX pass), so the fallback added
+     * dollars and euros to rupees at 1:1. A $200 dinner landed in the budget
+     * as ₹200. The caller reports the skipped count, so the gap is visible
+     * rather than baked into a confident wrong total.
+     *
+     * When a real FX pass starts filling `converted_amount`, those rows
+     * re-enter the sum here with no change to this code.
+     */
+    const totals = new Map<string | null, { total: number; unconverted: number }>();
     for (const row of data ?? []) {
       const key = (row as any).category_id ?? null;
-      // Fall back to `amount` when FX has not run: better a slightly wrong
-      // number in the base-currency column than a budget bar reading zero.
-      const value = Number((row as any).converted_amount ?? (row as any).amount ?? 0);
-      totals.set(key, (totals.get(key) ?? 0) + value);
+      const bucket = totals.get(key) ?? { total: 0, unconverted: 0 };
+      const converted = (row as any).converted_amount;
+      if (converted === null || converted === undefined) bucket.unconverted += 1;
+      else bucket.total += Number(converted) || 0;
+      totals.set(key, bucket);
     }
-    return [...totals].map(([categoryId, total]) => ({ categoryId, total }));
+    return [...totals].map(([categoryId, sums]) => ({ categoryId, ...sums }));
   }
 
   async recordApproval(input: {
@@ -547,5 +565,26 @@ export class SupabaseAuditLogRepository implements AuditLogRepository {
         metadata: entry.metadata ?? {},
       });
     if (error) fail(error, 'Audit log write');
+  }
+
+  async list(orgId: string, query: ListAuditQuery): Promise<Page<AuditLogEntry>> {
+    let q = this.supabase
+      .getClient()
+      .from('audit_log')
+      .select('*', { count: 'exact' })
+      .eq('org_id', orgId);
+    if (query.entity) q = q.eq('entity', query.entity);
+
+    // Matches `audit_log_org_created_idx` (org_id, created_at desc).
+    const { data, error, count } = await q
+      .order('created_at', { ascending: false })
+      .range(query.offset, query.offset + query.limit - 1);
+    if (error) fail(error, 'Audit log read');
+    return {
+      items: (data ?? []).map(map.toAuditLogEntry),
+      total: count ?? 0,
+      limit: query.limit,
+      offset: query.offset,
+    };
   }
 }

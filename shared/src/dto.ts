@@ -80,4 +80,15 @@ export interface BudgetStatus {
   /** 0–1+; can exceed 1 when over budget. Drives the progress-bar color ramp. */
   utilization: number;
   currency: string;
+  /**
+   * How many expenses in this window were left out of `spent` because they are
+   * not in `currency` and no converted value exists yet (PRD §6.5 — FX is not
+   * implemented).
+   *
+   * It is reported rather than folded in because the alternative is worse: the
+   * old code added the raw foreign amount, so a $200 charge was counted as ₹200.
+   * A total that says what it excluded is honest; one that silently adds
+   * dollars to rupees is not. Zero once a real FX pass fills `converted_amount`.
+   */
+  unconvertedCount: number;
 }

@@ -204,6 +204,72 @@ describe('Copilot', () => {
     expect(tools[0].inputSchema).toEqual(SEARCH_EXPENSES.inputSchema);
   });
 
+  /**
+   * Cross-origin tools live only as long as the document that registered them.
+   * Keeping them on the menu after the partner iframe is gone means the model
+   * keeps calling a document that no longer exists, and every call fails with
+   * a confusing error instead of the tool simply not being offered.
+   */
+  describe('cross-origin tools', () => {
+    /** A modelContext that reports one tool from another origin. */
+    function setupWithRemote() {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [
+          { provide: GeminiClient, useValue: scriptedGemini() },
+          { provide: KeyStore, useValue: { hasKey: () => true } },
+          { provide: ApiClient, useValue: { get: vi.fn(), post: vi.fn() } },
+          {
+            provide: DOCUMENT,
+            useValue: {
+              location: { origin: 'https://actuo.app' },
+              modelContext: Object.assign(new EventTarget(), {
+                registerTool: vi.fn().mockResolvedValue(undefined),
+                getTools: vi.fn().mockResolvedValue([
+                  {
+                    name: 'get_book_price',
+                    title: 'Get book price',
+                    description: 'Price of one book.',
+                    inputSchema: { type: 'object', properties: {} },
+                    origin: 'https://pageturner.example',
+                    annotations: { readOnlyHint: true },
+                  },
+                  // Same-origin tools come back too and must be ignored: the
+                  // registry already holds their execute functions locally.
+                  {
+                    name: 'search_expenses',
+                    title: 'Search expenses',
+                    description: 'Ours.',
+                    inputSchema: { type: 'object', properties: {} },
+                    origin: 'https://actuo.app',
+                    annotations: { readOnlyHint: true },
+                  },
+                ]),
+              }),
+            },
+          },
+        ],
+      });
+      return TestBed.inject(Copilot);
+    }
+
+    it('keeps only genuinely cross-origin tools', async () => {
+      const copilot = setupWithRemote();
+      await copilot.discoverRemoteTools(['https://pageturner.example']);
+
+      expect(copilot.crossOriginTools().map((t) => t.name)).toEqual(['get_book_price']);
+    });
+
+    it('forgets them when asked', async () => {
+      const copilot = setupWithRemote();
+      await copilot.discoverRemoteTools(['https://pageturner.example']);
+
+      copilot.clearRemoteTools();
+
+      expect(copilot.crossOriginTools()).toEqual([]);
+    });
+  });
+
   it('clears the conversation on reset', async () => {
     const copilot = setup(scriptedGemini(textResult('hi')));
     await copilot.send('hello');

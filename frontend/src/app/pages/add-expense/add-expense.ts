@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { CURRENCIES, type Expense } from '@actuo/shared';
 import { ApiClient } from '../../core/api/api-client.js';
+import { Session } from '../../core/session/session.js';
+import { ToolCallAudit } from '../../webmcp/tool-call-audit.js';
 
 /**
  * Add Expense — the DECLARATIVE WebMCP surface (PRD §7).
@@ -132,6 +134,8 @@ import { ApiClient } from '../../core/api/api-client.js';
 })
 export class AddExpense {
   private readonly api = inject(ApiClient);
+  private readonly session = inject(Session);
+  private readonly audit = inject(ToolCallAudit);
 
   protected readonly currencies = CURRENCIES;
   protected readonly today = new Date().toISOString().slice(0, 10);
@@ -169,6 +173,28 @@ export class AddExpense {
     if (submitEvent.agentInvoked && typeof submitEvent.respondWith === 'function') {
       submitEvent.respondWith(save);
     }
+
+    /*
+     * This form is the ONLY tool call that can come from a person, because it
+     * is the only one the browser derives from markup rather than routing
+     * through `ToolRegistry` — and `agentInvoked` is what tells the two apart.
+     * Everything else in `tool_call_log` is an agent, so without this row the
+     * audit viewer's "Human" filter is permanently empty and the human/agent
+     * contrast it exists to draw has nothing to draw it with.
+     */
+    void save
+      .then((result) => {
+        this.audit.record({
+          actor: submitEvent.agentInvoked ? 'agent' : 'human',
+          toolName: 'add_expense_form',
+          input: payload,
+          output: result,
+        });
+        // A new expense can be submitted for approval, which changes what the
+        // state-gated `approve_expense` tool should be offering.
+        return this.session.refreshPendingApprovals();
+      })
+      .catch(() => undefined);
 
     /*
      * The failure is already surfaced in `message()`, so this catch exists only

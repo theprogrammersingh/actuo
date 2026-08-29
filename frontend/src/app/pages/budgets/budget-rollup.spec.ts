@@ -21,6 +21,7 @@ function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
     remaining: budgeted - spent,
     utilization: budgeted > 0 ? spent / budgeted : Number.POSITIVE_INFINITY,
     currency: 'INR',
+    unconvertedCount: 0,
     ...overrides,
   };
 }
@@ -144,5 +145,29 @@ describe('rollupBudgets', () => {
 
   it('carries the currency through for formatting', () => {
     expect(rollupBudgets([budget({ currency: 'USD' })]).currency).toBe('USD');
+  });
+});
+
+describe('rollupBudgets — unconverted spend', () => {
+  /**
+   * `spent` counts only rows the server could express in the base currency, so
+   * the screen has to be able to say what it left out. Summed across categories
+   * because the notice is for the whole page, not per bar.
+   */
+  it('sums the unconverted counts across categories', () => {
+    const rollup = rollupBudgets([
+      budget({ categoryId: 'a', categoryName: 'Travel', unconvertedCount: 2 }),
+      budget({ categoryId: 'b', categoryName: 'Meals', unconvertedCount: 1 }),
+    ]);
+
+    expect(rollup.unconvertedCount).toBe(3);
+  });
+
+  it('is zero when every expense was in the base currency', () => {
+    expect(rollupBudgets([budget()]).unconvertedCount).toBe(0);
+  });
+
+  it('is zero for an empty list', () => {
+    expect(rollupBudgets([]).unconvertedCount).toBe(0);
   });
 });
