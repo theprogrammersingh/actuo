@@ -8,15 +8,22 @@
 # subdirectory; `rootDir: "/"` in firebase.json keeps pnpm-workspace.yaml and
 # pnpm-lock.yaml at the root of the build workspace, where the installer looks.
 
-# The pnpm version is pinned EXACTLY in package.json `engines.pnpm`, not as a
-# range. The App Hosting Node buildpack resolves `engines.pnpm` against the npm
-# registry and takes the highest match — it ignores `packageManager` — so the
-# old `">=10"` silently selected pnpm 12. Its own >= 11 branch is broken: it
-# downloads the standalone GitHub tarball and then launches it as
+# The pnpm version is bounded in package.json `engines.pnpm`, currently
+# `">=9.0.0 <10.0.0"` against `packageManager: pnpm@9.15.5`. The App Hosting Node
+# buildpack resolves `engines.pnpm` against the npm registry and takes the
+# highest match — it ignores `packageManager` — so the earlier open-ended
+# `">=10"` silently selected pnpm 12. Its >= 11 branch is broken: it downloads
+# the standalone GitHub tarball and then launches it as
 # `node <layer>/bin/dist/pnpm.mjs`, a path that only exists in the npm package
 # layout, and the build dies with MODULE_NOT_FOUND before installing anything.
-# Keep `engines.pnpm` an exact 10.x that matches `packageManager`; bumping it
-# past 11 re-breaks the deploy while local and CI stay green.
+#
+# The upper bound is what keeps that from recurring. Raising it past 11 breaks
+# the deploy and nothing else — local and CI follow `packageManager` and stay
+# green, so nothing short of a real build will tell you.
+#
+# The range does let the builder take the newest 9.x (9.15.9 today) rather than
+# the exact 9.15.5 used locally. That is fine within 9.x; pin the exact version
+# here if a build ever needs to match local byte for byte.
 
 runConfig:
   cpu: 1

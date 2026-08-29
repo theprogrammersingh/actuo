@@ -267,12 +267,26 @@ composes them in one process.
 **The App Hosting buildpack reads `engines.pnpm`, and ignores `packageManager`.**
 It resolves that field as a *range* against the npm registry and installs the
 highest match, so `">=10"` quietly became pnpm 12 on the build machine while
-local and CI stayed on 10.14.0. The buildpack's own >= 11 branch is broken — it
-unpacks the standalone GitHub tarball, then launches it as
+local and CI stayed on the pinned version. The buildpack's own >= 11 branch is
+broken — it unpacks the standalone GitHub tarball, then launches it as
 `node <layer>/bin/dist/pnpm.mjs`, which only exists in the npm package layout —
 so the build died with `MODULE_NOT_FOUND` before installing a single dependency.
-`engines.pnpm` is now an exact `10.14.0` matching `packageManager`. Bumping it
-past 11 breaks the deploy and nothing else, so no local check will catch it.
+
+The repo now runs **pnpm 9**: `packageManager` is `pnpm@9.15.5` and
+`engines.pnpm` is `">=9.0.0 <10.0.0"`, which caps the buildpack far below the
+broken branch. Keep that upper bound. Widening it past 11 breaks the deploy and
+*nothing else*, so no local run and no CI run can catch it.
+
+One wrinkle that follows from "highest match": the range lets the build machine
+take the newest 9.x (9.15.9 today) while local and CI take the exact 9.15.5 from
+`packageManager`. Harmless inside 9.x — same lockfile format — but if a build
+ever has to be byte-identical to local, make `engines.pnpm` the exact version.
+
+`lockfileVersion: '9.0'` does **not** mean pnpm 9 wrote the lockfile; 9 through
+12 all emit `9.0`. The version that wrote it shows in the peer-dependency hash
+suffixes: pnpm 9 encodes them in base32 (`21.2.22(tvsdneph7b2ppo44lsnrlossqi)`),
+pnpm 10 in 32-character hex (`21.2.22(addca2e8b0d1cdbe785c1221ede9343a)`). Grep
+for one or the other before trusting an assumption about which produced it.
 
 **Never give `NODE_ENV` BUILD availability in `apphosting.yaml`.** The buildpack
 installs with `pnpm install --prod`, which under `NODE_ENV=production` drops
