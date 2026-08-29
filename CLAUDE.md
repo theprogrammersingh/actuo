@@ -26,6 +26,39 @@ piece is the **Actuo Copilot** — a site-agnostic chat widget that discovers to
 
 Built for a hackathon deadline (Aug 31, 2026).
 
+## Comments
+
+The comment density here is deliberate and it is high — 3,850 comment lines
+across 27,649, and files like `core/expense/amount.ts` and `webmcp/tool-call-audit.ts`
+are over half prose. **That is the design, not an accident, and not cleanup
+backlog.** Most of what this repo knows that a reader cannot infer — why
+`approved` is not `success`, why `turnsToContents()` replays raw parts, why a
+$200 charge must not be added to a rupee total — lives in those comments. A
+sweep that removes them destroys the most valuable thing in the codebase.
+
+So "remove unnecessary comments" here means a very short list:
+
+- ASCII rule lines that carry no words (`// ------------------`), including the
+  two rules wrapped around a section title. Keep the title, drop the rules.
+- Commented-out code, and comments describing code that no longer exists.
+- A comment that only restates the line beneath it.
+
+**Never remove**, however verbose:
+
+- Any comment saying *why* — a rejected alternative, a bug it prevents, a spec
+  quirk, a rule that looks arbitrary until explained.
+- `LOAD-BEARING`, `ORDER IS SIGNIFICANT`, and "do not simplify this away" notes.
+  Several exist because the simplification was already tried and broke something
+  subtle: thought signatures, `parseInputSchema()`, `setGlobalPrefix`.
+- PRD/Design-Doc section references (`PRD §6.4`, `§2.2`) — they are the link back
+  to the source of truth.
+- JSDoc `@example` blocks. They look like commented-out code and are not.
+
+Measure before sweeping. A scan of all 177 source files found only 16 removable
+lines — 5 comments restated their code, zero were stale TODOs, zero were
+commented-out code. If a comment sweep proposes to remove hundreds of lines, it
+has misread prose as noise; stop and re-read the list above.
+
 ## Commits
 
 **No commit message, PR title, or PR body in this repo mentions Claude, Claude

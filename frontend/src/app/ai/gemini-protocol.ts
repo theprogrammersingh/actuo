@@ -16,9 +16,7 @@
 import { GeminiError } from './gemini-errors';
 import type { GeminiFunctionDeclaration, GeminiSchema } from './gemini-schema';
 
-// ---------------------------------------------------------------------------
 // Wire types
-// ---------------------------------------------------------------------------
 
 export interface WireTextPart {
   text: string;
@@ -87,9 +85,7 @@ export interface WireGenerateContentResponse {
   modelVersion?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Conversation types
-// ---------------------------------------------------------------------------
 
 export interface GeminiFunctionCall {
   /** Present when Gemini emits parallel calls; echo it back untouched. */
@@ -157,9 +153,7 @@ export interface GeminiGenerateResult {
   raw: WireGenerateContentResponse;
 }
 
-// ---------------------------------------------------------------------------
 // Turn -> wire
-// ---------------------------------------------------------------------------
 
 /**
  * Gemini requires `functionResponse.response` to be a JSON object. Tools are
@@ -226,9 +220,7 @@ export function turnsToContents(turns: readonly GeminiTurn[]): WireContent[] {
   return contents;
 }
 
-// ---------------------------------------------------------------------------
 // Wire -> result
-// ---------------------------------------------------------------------------
 
 function isTextPart(part: WirePart): part is WireTextPart {
   return typeof (part as WireTextPart).text === 'string';

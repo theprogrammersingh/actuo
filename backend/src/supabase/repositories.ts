@@ -29,9 +29,7 @@ import type {
   ToolCallLogEntry,
 } from '@actuo/shared';
 
-// ---------------------------------------------------------------------------
 // Records that exist server-side only
-// ---------------------------------------------------------------------------
 
 /**
  * A user row *including* the password hash.
@@ -141,9 +139,7 @@ export interface AppendToolCallInput {
   output: unknown;
 }
 
-// ---------------------------------------------------------------------------
 // Interfaces
-// ---------------------------------------------------------------------------
 
 export interface UserRepository {
   findByEmail(email: string): Promise<UserRecord | null>;
@@ -231,9 +227,7 @@ export interface AuditLogRepository {
   list(orgId: string, query: ListAuditQuery): Promise<Page<AuditLogEntry>>;
 }
 
-// ---------------------------------------------------------------------------
 // Injection tokens
-// ---------------------------------------------------------------------------
 
 export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
 export const ORG_REPOSITORY = Symbol('ORG_REPOSITORY');

@@ -218,8 +218,6 @@ export class ExpensesService {
     return updated;
   }
 
-  // -------------------------------------------------------------------------
-
   private toQuery(user: AuthenticatedUser, dto: SearchExpensesQueryDto): ExpenseQuery {
     return {
       query: dto.query,
