@@ -86,7 +86,7 @@ env:
   # spec-compliant and scrapers may not resolve og:image. Set it to the
   # backend's real hostname.
   - variable: PUBLIC_ORIGIN
-    value: ""
+    value: "actuo.programmersingh.dev"
     availability: [BUILD]
 
   # --- Optional, with sane defaults in EnvService --------------------------
