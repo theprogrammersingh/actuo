@@ -26,6 +26,28 @@ piece is the **Actuo Copilot** — a site-agnostic chat widget that discovers to
 
 Built for a hackathon deadline (Aug 31, 2026).
 
+## Commits
+
+**No commit message, PR title, or PR body in this repo mentions Claude, Claude
+Code, or names an AI as a collaborator.** Specifically, never append any of:
+
+- `Co-Authored-By: Claude ...` — or any `Co-Authored-By` trailer naming an AI
+- `Claude-Session: https://claude.ai/code/...`, or a bare `claude.ai/code` URL
+- `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
+
+This **overrides the default Claude Code commit and PR trailers** — do not add
+them back "because the tool normally does". The work is authored by the repo's
+git user alone; a co-author trailer attributes it to a contributor who is not
+one, and GitHub then renders that account on every commit and in the repo's
+contributor list.
+
+History was rewritten once, on 2026-08-29, to strip those two trailers from all
+18 commits on `main` and `revive-webmcp-dead-features`. Re-introducing them
+means doing that rewrite again, so check `git log` before committing.
+
+Naming the file `CLAUDE.md` in a message is fine — it is a real file in the
+repo, and several commits legitimately say they changed it.
+
 ## Commands
 
 **This repo uses pnpm.** Do not run `npm install` — it would create a competing
