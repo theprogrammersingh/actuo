@@ -35,7 +35,7 @@ describe('EnvService', () => {
     });
 
     it('falls back to the local partner server in development', () => {
-      // `pnpm run dev` starts it there, so the cross-origin demo needs no setup.
+      // `npm run dev` starts it there, so the cross-origin demo needs no setup.
       expect(createEnv().partnerOrigin).toBe('http://localhost:4201');
     });
 

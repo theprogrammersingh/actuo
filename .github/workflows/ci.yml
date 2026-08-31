@@ -5,7 +5,7 @@
 #
 #   typecheck   catches what the test build tolerates
 #   test        shared + backend unit + frontend
-#   test:e2e    a SEPARATE vitest config; `pnpm test` does not include it, and a
+#   test:e2e    a SEPARATE vitest config; `npm test` does not include it, and a
 #               change was once committed on unit tests alone that broke an e2e
 #               spec pinning the same data
 #   build       catches SSR prerender failures and template type errors
@@ -35,35 +35,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No version pin here: the root package.json `packageManager` field is the
-      # single source of truth, and duplicating it is how the two drift.
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          cache: npm
 
-      # `--frozen-lockfile` is the CI equivalent of `npm ci`: it fails rather
-      # than silently resolving a dependency the lockfile does not name.
+      # `npm ci` installs exactly what package-lock.json names and fails if the
+      # lockfile and the manifests disagree, rather than quietly resolving
+      # something new the way `npm install` would.
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       # `shared` must be built before either consumer, or both fail at once with
-      # TS2307. `pnpm test` does not build it.
+      # TS2307. `npm test` does not build it.
       - name: Build shared
-        run: pnpm run build:shared
+        run: npm run build:shared
 
       - name: Typecheck
         run: |
-          pnpm --filter backend exec tsc --noEmit -p tsconfig.json
-          pnpm --filter frontend exec tsc --noEmit -p tsconfig.app.json
+          npm exec --workspace=backend -- tsc --noEmit -p tsconfig.json
+          npm exec --workspace=frontend -- tsc --noEmit -p tsconfig.app.json
 
       - name: Unit tests
-        run: pnpm test
+        run: npm test
 
       - name: End-to-end tests
-        run: pnpm run test:e2e
+        run: npm run test:e2e
 
       - name: Build
-        run: pnpm run build
+        run: npm run build

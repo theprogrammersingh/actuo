@@ -5,7 +5,7 @@
  * they came from and to make a palette change a one-command regeneration
  * rather than an afternoon in a design tool.
  *
- * Requires ImageMagick 7 (`magick`). Not part of `pnpm run build` — the outputs
+ * Requires ImageMagick 7 (`magick`). Not part of `npm run build` — the outputs
  * are committed, and a build should not depend on a system tool that most CI
  * images lack.
  *

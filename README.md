@@ -62,8 +62,8 @@ dependence is confined to the cross-origin demo.
 ### 1. Run it
 
 ```bash
-pnpm install          # pnpm, not npm — see CONTRIBUTING notes in CLAUDE.md
-pnpm run dev          # backend :3000, frontend :4200, partner demo :4201
+npm install           # npm workspaces — see CLAUDE.md for why not pnpm
+npm run dev          # backend :3000, frontend :4200, partner demo :4201
 ```
 
 Open http://localhost:4200 and sign in with a seeded account:
@@ -142,9 +142,9 @@ frontend never talks to Supabase, the Gemini key never reaches our servers, and
 roles are enforced server-side on every request.
 
 ```bash
-pnpm test          # shared + backend unit + frontend
-pnpm run test:e2e  # backend e2e — a separate config, not included above
-pnpm run build     # shared -> backend -> frontend, then the SEO origin stamp
+npm test          # shared + backend unit + frontend
+npm run test:e2e  # backend e2e — a separate config, not included above
+npm run build     # shared -> backend -> frontend, then the SEO origin stamp
 ```
 
 `.github/workflows/ci.yml` runs exactly that gate on every push. It needs no
@@ -156,12 +156,12 @@ import time, so the app boots and runs its e2e suite without credentials.
 ## Deploying
 
 The target is Firebase App Hosting, but `server.mjs` is a plain Node server, so
-any host that can run `pnpm install && pnpm run build && pnpm start` will do.
+any host that can run `npm ci && npm run build && npm start` will do.
 
 Check it locally first — this is the whole deploy in one command:
 
 ```bash
-pnpm run build && node server.mjs        # :8080
+npm run build && node server.mjs        # :8080
 
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' localhost:8080/           # 200 text/html
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' localhost:8080/api/health  # 200 application/json
@@ -175,7 +175,7 @@ That last one matters more than it looks — see *Allowed hosts* below.
 
 `apphosting.yaml` and `firebase.json` are committed. Both the build and the run
 command are stated outright rather than left to framework detection, because this
-repository is a pnpm workspace with no framework at its root.
+repository is an npm workspace with no framework at its root.
 
 ```bash
 firebase login
@@ -192,23 +192,30 @@ firebase deploy --only apphosting        # deploys from this local checkout
 
 Set `SUPABASE_URL` in `apphosting.yaml` to your own project before deploying.
 
-**Root directory must be `/`.** Firebase App Hosting has a known open issue with
-pnpm workspaces in a *subdirectory* ([firebase-tools#7478](https://github.com/firebase/firebase-tools/issues/7478),
-`lockfile not found`). Keeping the root directory at the repository root puts
-`pnpm-workspace.yaml` and `pnpm-lock.yaml` where the installer looks. If the
-build fails there anyway, nothing needs rewriting: `node server.mjs` runs on
-Cloud Run, Render or Fly unchanged.
+**Root directory must be `/`.** App Hosting looks for the lockfile at the root
+directory it is given, so keeping it at the repository root puts
+`package-lock.json` where the installer expects it
+([firebase-tools#7478](https://github.com/firebase/firebase-tools/issues/7478)
+covers the subdirectory case).
+
+**This project is on npm because App Hosting could not build it with pnpm.**
+`pnpm install` fails inside the buildpack with `Cannot convert undefined or null
+to object` — [firebase-tools#10435](https://github.com/firebase/firebase-tools/issues/10435),
+filed for pnpm monorepos and closed as not planned. It does not reproduce
+locally. If the npm build hits a comparable wall, nothing needs rewriting:
+`node server.mjs` is a plain Node server and runs on Cloud Run, Render or Fly
+unchanged.
 
 ### Set `PUBLIC_ORIGIN` too
 
 The public pages are prerendered, so absolute URLs — the sitemap's `<loc>`,
 `og:image`, `canonical` — have to be decided at build time. `index.html`,
 `sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that
-`scripts/stamp-seo.mjs` replaces as the last step of `pnpm run build`. Unset,
+`scripts/stamp-seo.mjs` replaces as the last step of `npm run build`. Unset,
 everything stays root-relative and valid; set, it becomes absolute.
 
 ```bash
-PUBLIC_ORIGIN=https://your-host pnpm run build
+PUBLIC_ORIGIN=https://your-host npm run build
 grep -o '<loc>[^<]*</loc>' frontend/dist/frontend/browser/sitemap.xml
 ```
 

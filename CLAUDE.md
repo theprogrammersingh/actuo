@@ -14,7 +14,7 @@ Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 Source of truth docs live in `docs/`: `Actuo-PRD.md` (features, WebMCP coverage map,
 data model), `Actuo-Design-Doc.md` (Aurora Ledger visual identity), and
 `Actuo-Project-Initialisation.md` (setup — partly superseded: it predates both
-Tailwind v4 and the move to pnpm, so follow the commands here rather than there).
+Tailwind v4 and the move to npm workspaces, so follow the commands here rather than there).
 
 ## What Actuo is
 
@@ -83,39 +83,40 @@ repo, and several commits legitimately say they changed it.
 
 ## Commands
 
-**This repo uses pnpm.** Do not run `npm install` — it would create a competing
-`package-lock.json` and a hoisted `node_modules` that hides missing dependency
-declarations (see "Why pnpm changes things" below).
+**This repo uses npm workspaces.** It used pnpm until the App Hosting build
+proved unable to install it — see "Why the package manager is npm" below before
+proposing a switch back.
 
 ```bash
-pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
-pnpm run dev           # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
-pnpm run build         # shared -> backend -> frontend, in that order
-pnpm test              # backend + frontend unit tests
-pnpm run test:e2e      # backend e2e
+npm install            # `npm ci` is the CI form: exact lockfile, no re-resolution
+npm run dev            # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
+npm run build          # shared -> backend -> frontend, in that order
+npm test               # shared + backend + frontend unit tests
+npm run test:e2e       # backend e2e
 ```
 
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
 
 ```bash
 # backend: one file, or one test by name
-pnpm --filter backend exec vitest run src/app.controller.spec.ts
-pnpm --filter backend exec vitest run -t "routing contract"
-pnpm --filter backend run test:e2e
+npm exec --workspace=backend -- vitest run src/app.controller.spec.ts
+npm exec --workspace=backend -- vitest run -t "routing contract"
+npm run test:e2e --workspace=backend
 
 # frontend: MUST go through ng test, which is the @angular/build:unit-test builder
-pnpm --filter frontend run test
-pnpm --filter frontend exec ng test --no-watch --filter "ToolRegistry"
+npm run test --workspace=frontend
+npm exec --workspace=frontend -- ng test --no-watch --filter "ToolRegistry"
 ```
 
 The name filter is `--filter` (a regex over suite and test names). It is **not**
 `--test-name-pattern` — that is vitest's own flag, and the Angular builder rejects
 it outright with `Unknown argument`.
 
-`frontend`'s `test` script already carries `--no-watch`, deliberately: npm swallows a
-bare `--` while pnpm forwards it to Angular as an empty argument, which the builder
-rejects with a schema error. Keeping the flag inside the script makes it behave the
-same under any package manager. Use `test:watch` for the watching variant.
+`frontend`'s `test` script already carries `--no-watch`, deliberately: package
+managers disagree about how a bare `--` is forwarded, and Angular's builder
+rejects an empty argument with a schema error. Keeping the flag inside the script
+makes it behave the same under any of them. Use `test:watch` for the watching
+variant.
 
 **Do not run the frontend suite with bare `npx vitest`.** Angular's builder generates the
 TestBed bootstrap (`init-testbed.js`) as part of the test build; without it every spec that
@@ -127,8 +128,8 @@ and `frontend/tsconfig.spec.json`, or the `WebMCP` namespace resolves in the app
 fails in the test build.
 
 `shared/` must be built before either consumer — a missing `shared/dist` shows up as
-`TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `pnpm run dev`
-and `pnpm run build` handle the ordering.
+`TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `npm run dev`
+and `npm run build` handle the ordering.
 
 ## Layout
 
@@ -144,32 +145,48 @@ that ship as **one** Firebase App Hosting deploy: a single Node process routes
 `/api/*` to Nest and everything else to Angular's SSR handler. That process is
 `server.mjs` at the repo root — see "The deploy" below.
 
-## Why pnpm changes things
+## Why the package manager is npm (and what that costs)
 
-The workspace manifest is **`pnpm-workspace.yaml`**, not a `workspaces` field in
-`package.json`. Add a new package there.
+**npm is here because of the deploy, not by preference.** The repo ran on pnpm
+and pnpm is the better tool for this shape of project. App Hosting could not
+build it: `pnpm install` dies inside the buildpack with `Cannot convert undefined
+or null to object` in ~314ms, before any network fetch. That is
+firebase-tools#10435, open against pnpm monorepos on every pnpm version, and
+**closed as not planned**. It does not reproduce locally under any pnpm 9 or 10,
+cold store, or buildpack environment variable. `apphosting.yaml` carries the full
+history. Do not "restore pnpm" without checking that issue first — it is not a
+preference that was lost, it is a deploy that does not build.
 
-pnpm links only what a package *declares*, with no hoisting. That is stricter than npm
-and it immediately exposed two real bugs npm had been masking:
+The workspace manifest is the **`workspaces` array in the root `package.json`**.
+Add a new package there. There is no `pnpm-workspace.yaml` any more, and
+`onlyBuiltDependencies` is gone with it: npm runs dependency lifecycle scripts by
+default, so argon2, `@swc/core`, esbuild and lightningcss build without a list.
 
-- **`@actuo/shared` was imported by 52 files but declared as a dependency nowhere.** It
-  resolved only because npm hoists every workspace package into the root `node_modules`.
-  Both consumers now declare `"@actuo/shared": "workspace:*"`.
-- **`shared` never declared `typescript`**, yet its build script runs `tsc`. It was
+**What npm loses, and what to do about it.** pnpm links only what a package
+declares. That strictness caught two real bugs npm had been masking:
+
+- `@actuo/shared` was imported by 52 files and declared as a dependency
+  **nowhere**; it resolved only because npm hoists every workspace package into
+  the root `node_modules`.
+- `shared` never declared `typescript`, yet its build script runs `tsc`. It was
   borrowing the root's binary.
 
-So: if an import resolves, some package.json must say so. A missing declaration now
-fails loudly at install or build time instead of working by accident.
+Both are fixed in the manifests and must stay fixed — but **nothing enforces them
+now.** Under npm's hoisted `node_modules` an undeclared dependency resolves
+happily and fails only somewhere else later. So when adding an import, check that
+some `package.json` actually declares it; the install will not tell you.
 
-**`onlyBuiltDependencies` in `pnpm-workspace.yaml` is load-bearing.** pnpm blocks
-dependency lifecycle scripts by default, so native bindings never get built — esbuild,
-`@swc/core` (which vitest needs for Nest DI), `argon2`, and `lightningcss` all fail in
-different, confusing ways if dropped from that list. Add a package there when a new
-native dependency appears.
+`@actuo/shared` is linked by npm from the `workspaces` array, so
+`"@actuo/shared": "*"` in `backend` and `frontend` resolves to the local package,
+not the registry. It is `"*"` rather than pnpm's `workspace:*` because npm has no
+such protocol and treats it as an invalid range.
 
-pnpm also fixes the lightningcss problem npm had: it records every platform variant in
-the lockfile and installs the matching one, so the explicit `optionalDependencies` pin
-npm needed is gone.
+The lightningcss problem npm used to have is gone: npm 11 records every platform
+variant in the lockfile, so `lightningcss-linux-x64-gnu`, `@esbuild/linux-x64`
+and `@swc/core-linux-x64-gnu` are all present for the Linux build machine even
+though this one is arm64 macOS. No `optionalDependencies` pin is needed. Verify
+after any lockfile regeneration — a build machine missing a native binary is the
+failure this prevents.
 
 ## Tooling facts that differ from the planning docs
 
@@ -241,14 +258,14 @@ fallback only.
 there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which is
 exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
 dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
-`/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
+`/partner-demo/` path exists on a different origin; `npm run dev` starts it as a
 third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
 by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
 app's own origin, `/agent` says so instead of showing an empty list.
 
 ## The deploy
 
-`server.mjs` at the repo root is the production entry point: `pnpm start`, and
+`server.mjs` at the repo root is the production entry point: `npm start`, and
 what `apphosting.yaml`'s `runCommand` names. It imports the two build outputs and
 composes them in one process.
 
@@ -264,32 +281,15 @@ composes them in one process.
 - `createNodeRequestHandler` returns its argument unchanged, so the exported
   `reqHandler` *is* the Express app and mounts directly as middleware.
 
-**The App Hosting buildpack reads `engines.pnpm`, and ignores `packageManager`.**
-It resolves that field as a *range* against the npm registry and installs the
-highest match, so `">=10"` quietly became pnpm 12 on the build machine while
-local and CI stayed on the pinned version. The buildpack's own >= 11 branch is
-broken — it unpacks the standalone GitHub tarball, then launches it as
-`node <layer>/bin/dist/pnpm.mjs`, which only exists in the npm package layout —
-so the build died with `MODULE_NOT_FOUND` before installing a single dependency.
-
-The repo now runs **pnpm 9**: `packageManager` is `pnpm@9.15.5` and
-`engines.pnpm` is `">=9.0.0 <10.0.0"`, which caps the buildpack far below the
-broken branch. Keep that upper bound. Widening it past 11 breaks the deploy and
-*nothing else*, so no local run and no CI run can catch it.
-
-One wrinkle that follows from "highest match": the range lets the build machine
-take the newest 9.x (9.15.9 today) while local and CI take the exact 9.15.5 from
-`packageManager`. Harmless inside 9.x — same lockfile format — but if a build
-ever has to be byte-identical to local, make `engines.pnpm` the exact version.
-
-`lockfileVersion: '9.0'` does **not** mean pnpm 9 wrote the lockfile; 9 through
-12 all emit `9.0`. The version that wrote it shows in the peer-dependency hash
-suffixes: pnpm 9 encodes them in base32 (`21.2.22(tvsdneph7b2ppo44lsnrlossqi)`),
-pnpm 10 in 32-character hex (`21.2.22(addca2e8b0d1cdbe785c1221ede9343a)`). Grep
-for one or the other before trusting an assumption about which produced it.
+**The buildpack resolves an `engines.<pm>` range to the newest published match,
+and ignores `packageManager`.** That is how `engines.pnpm: ">=10"` silently
+selected pnpm 12 and broke the build. So there is deliberately **no
+`engines.npm`** — unset, the buildpack uses the npm bundled with the Node
+runtime, which is the best-tested path through it. Adding an `engines.npm` range
+re-opens exactly the failure mode that cost two builds.
 
 **Never give `NODE_ENV` BUILD availability in `apphosting.yaml`.** The buildpack
-installs with `pnpm install --prod`, which under `NODE_ENV=production` drops
+installs production-only under `NODE_ENV=production`, dropping
 every devDependency — and this build *is* devDependencies: the Angular CLI, the
 Nest CLI, typescript. Nothing in the build reads `NODE_ENV` anyway (Angular
 takes `production` from `angular.json`); the single reader in the repo is
@@ -310,7 +310,7 @@ are prerendered, so absolute URLs — `<loc>` in the sitemap, `og:image`,
 `canonical` — must be decided before the build finishes. `index.html`,
 `sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that survives
 prerendering into every generated file, and `scripts/stamp-seo.mjs` replaces it
-across `dist/frontend/browser` as the last step of `pnpm run build`. Unset, it
+across `dist/frontend/browser` as the last step of `npm run build`. Unset, it
 substitutes `''` and everything stays root-relative and valid.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no

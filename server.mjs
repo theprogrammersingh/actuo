@@ -25,7 +25,7 @@
  * so there is nothing to configure here and no dependency to install at the
  * repository root.
  *
- *   pnpm run build && node server.mjs      # PORT defaults to 8080
+ *   npm run build && node server.mjs      # PORT defaults to 8080
  */
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -37,7 +37,7 @@ async function loadBuilt(specifier, what) {
   } catch (error) {
     if (error?.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error(
-        `[actuo] ${what} is missing (${specifier}). Run \`pnpm run build\` first — ` +
+        `[actuo] ${what} is missing (${specifier}). Run \`npm run build\` first — ` +
           'it builds shared, then backend, then frontend, in that order.',
         { cause: error },
       );

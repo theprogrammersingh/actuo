@@ -2,28 +2,35 @@
 #
 # Nothing here is left to framework auto-detection. App Hosting infers a build
 # and start command from the framework it thinks it sees, and this repository is
-# a pnpm workspace with three packages and no framework at its root — so both
-# commands are stated outright. That also sidesteps firebase-tools#7478 (pnpm
-# workspace lockfile discovery), which reproduces when the app lives in a
-# subdirectory; `rootDir: "/"` in firebase.json keeps pnpm-workspace.yaml and
-# pnpm-lock.yaml at the root of the build workspace, where the installer looks.
-
-# The pnpm version is bounded in package.json `engines.pnpm`, currently
-# `">=9.0.0 <10.0.0"` against `packageManager: pnpm@9.15.5`. The App Hosting Node
-# buildpack resolves `engines.pnpm` against the npm registry and takes the
-# highest match — it ignores `packageManager` — so the earlier open-ended
-# `">=10"` silently selected pnpm 12. Its >= 11 branch is broken: it downloads
-# the standalone GitHub tarball and then launches it as
-# `node <layer>/bin/dist/pnpm.mjs`, a path that only exists in the npm package
-# layout, and the build dies with MODULE_NOT_FOUND before installing anything.
+# an npm workspace with three packages and no framework at its root — so both
+# commands are stated outright. `rootDir: "/"` in firebase.json keeps
+# package-lock.json at the root of the build workspace, where the installer
+# looks.
 #
-# The upper bound is what keeps that from recurring. Raising it past 11 breaks
-# the deploy and nothing else — local and CI follow `packageManager` and stay
-# green, so nothing short of a real build will tell you.
+# THIS REPO IS ON npm BECAUSE OF THE BUILDPACK, not by preference. pnpm was the
+# package manager until the App Hosting build proved unable to install it:
 #
-# The range does let the builder take the newest 9.x (9.15.9 today) rather than
-# the exact 9.15.5 used locally. That is fine within 9.x; pin the exact version
-# here if a build ever needs to match local byte for byte.
+#   1. The buildpack reads `engines.pnpm` as a RANGE and installs the highest
+#      match, ignoring `packageManager`. An open `">=10"` selected pnpm 12,
+#      whose >= 11 branch in the buildpack is broken — it unpacks the standalone
+#      binary then launches it as `node <layer>/bin/dist/pnpm.mjs`, a path that
+#      exists only in the npm package layout. MODULE_NOT_FOUND, before a single
+#      dependency installed.
+#   2. Capping at 9.x fixed that and exposed the real blocker:
+#      `pnpm install --prod` dies with "Cannot convert undefined or null to
+#      object" in ~314ms — before any network fetch, so a config parse. That is
+#      firebase-tools#10435, filed for pnpm monorepos on any pnpm version, and
+#      CLOSED AS NOT PLANNED. It does not reproduce locally on any pnpm 9 or 10,
+#      cold store, or buildpack env var; it happens only inside the buildpack.
+#
+# So: do not "restore pnpm" here. It is not a preference that was lost, it is a
+# deploy that does not build. If it is ever revisited, check whether #10435 has
+# been reopened and fixed first.
+#
+# There is deliberately NO `engines.npm`. The buildpack resolves an engines
+# range to the highest published match, which is exactly how the pnpm 12 failure
+# happened; leaving it unset uses the npm bundled with the Node runtime, which
+# is the best-tested path through this buildpack.
 
 runConfig:
   cpu: 1
@@ -36,7 +43,7 @@ runConfig:
 scripts:
   # shared -> backend -> frontend, in that order. A missing shared/dist shows up
   # as TS2307 in both consumers at once.
-  buildCommand: pnpm run build
+  buildCommand: npm run build
   # The composed process: Nest owns /api/*, the Angular SSR handler takes the
   # rest. See server.mjs, and backend/test/routing-contract.e2e-spec.ts for the
   # contract it depends on.
@@ -50,8 +57,8 @@ env:
   # RUNTIME only, and that is load-bearing. `EnvService.partnerOrigin` is the
   # only reader in the repo and it runs per request; nothing in the build looks
   # at NODE_ENV (Angular takes `production` from angular.json, not the env). But
-  # the buildpack installs with `pnpm install --prod` under NODE_ENV=production,
-  # which drops every devDependency — and the whole build is devDependencies:
+  # the buildpack installs production-only under NODE_ENV=production, which
+  # drops every devDependency — and the whole build is devDependencies:
   # the Angular CLI, the Nest CLI, typescript. Granting this BUILD availability
   # produces a build that cannot find `ng`.
   - variable: NODE_ENV

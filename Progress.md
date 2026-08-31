@@ -27,33 +27,34 @@ because skipping it caused a real failure in this project, not as ceremony.
 
 ### 1. Typecheck
 ```bash
-pnpm --filter backend exec tsc --noEmit -p tsconfig.json
-pnpm --filter frontend exec tsc --noEmit -p tsconfig.app.json
+npm exec --workspace=backend -- tsc --noEmit -p tsconfig.json
+npm exec --workspace=frontend -- tsc --noEmit -p tsconfig.app.json
 ```
-Use `pnpm exec`, **never `npx`**. npx does not resolve workspace binaries — it
+Use `npm exec --workspace=<pkg>`, **never bare `npx`**. npx does not resolve
+workspace binaries — it
 silently downloaded an unrelated `tsc` package from the registry and reported
 success.
 
 ### 2. Both test suites
 ```bash
-pnpm test          # shared + backend unit + frontend
-pnpm run test:e2e  # backend e2e — separate config, NOT included above
+npm test          # shared + backend unit + frontend
+npm run test:e2e  # backend e2e — separate config, NOT included above
 ```
 Run **both**. A change was committed here after unit tests alone and broke an e2e
 spec that pinned the same data. The frontend suite must go through `ng test`
-(`pnpm --filter frontend run test`) — bare `vitest` cannot work, because Angular's
+(`npm run test --workspace=frontend`) — bare `vitest` cannot work, because Angular's
 builder generates the TestBed bootstrap.
 
 ### 3. Build
 ```bash
-pnpm run build     # shared → backend → frontend, in that order
+npm run build     # shared → backend → frontend, in that order
 ```
 Catches things tests miss: `shared` specs leaking into `dist`, SSR prerender
 failures, template type errors.
 
 ### 4. Run it and look at it
 ```bash
-pnpm run dev       # backend :3000, frontend :4200
+npm run dev       # backend :3000, frontend :4200
 ```
 Open the feature and use it. Tests did not catch the aurora-scarcity violation
 (two gradients in one viewport), and a dead `ng serve` behind a live
@@ -319,11 +320,11 @@ the video, and Phase 1–3 features.
   a small follow-up.
 - **CI has never run on GitHub.** The workflow was verified by running its exact
   command sequence locally; `act` is not installed on this machine.
-- **Firebase App Hosting has an open issue with pnpm workspaces**
-  ([firebase-tools#7478](https://github.com/firebase/firebase-tools/issues/7478),
-  `lockfile not found`) that reproduces when the app is in a *subdirectory*.
-  `rootDir: "/"` keeps the lockfile where the installer looks — the arrangement
-  least likely to hit it, but untested against the real builder. If it fails,
+- **App Hosting cannot build this repo with pnpm**, which is why it is on npm.
+  `pnpm install` dies in the buildpack with `Cannot convert undefined or null to
+  object` ([firebase-tools#10435](https://github.com/firebase/firebase-tools/issues/10435),
+  closed as not planned); it does not reproduce locally on any pnpm version.
+  `rootDir: "/"` keeps `package-lock.json` where the installer looks. If it fails,
   `node server.mjs` runs unchanged on Cloud Run, Render or Fly.
 - **`/agent` is a sixth tab on mobile.** The labels fit (widest is "Dashboard" at
   ~54px in a 65px slot at 390px, measured), but it is tight, and this was
