@@ -82,7 +82,7 @@ export class EnvService {
    * It has to be a *different* origin than the app or the demo proves nothing:
    * `getTools({fromOrigins})` would return same-origin tools and the Copilot
    * would filter every one of them out. Locally that is the static server on
-   * :4201 (`npm run dev:partner`); on a deploy it is whatever host the page
+   * :4201 (`pnpm run dev:partner`); on a deploy it is whatever host the page
    * ends up on, which is why this is configuration and not a constant.
    *
    * The localhost default is **development only**. Serving it from a deployed

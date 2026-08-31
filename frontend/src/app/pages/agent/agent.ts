@@ -148,7 +148,7 @@ interface AgentConfig {
           <p class="mt-2 text-sm text-muted">
             To run the real demo, point <code class="font-mono">PARTNER_DEMO_ORIGIN</code> at a
             host that is not this one. Locally that is
-            <code class="font-mono">npm run dev:partner</code> on :4201.
+            <code class="font-mono">pnpm run dev:partner</code> on :4201.
           </p>
         } @else if (sameOrigin()) {
           <!--
@@ -160,7 +160,7 @@ interface AgentConfig {
           <p class="text-sm text-muted">
             The partner page is configured on this app's own origin, so nothing it exposes is
             cross-origin. Set <code class="font-mono">PARTNER_DEMO_ORIGIN</code> to a different
-            host — locally that is <code class="font-mono">npm run dev:partner</code> on
+            host — locally that is <code class="font-mono">pnpm run dev:partner</code> on
             :4201.
           </p>
         } @else if (partnerUrl(); as url) {

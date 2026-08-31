@@ -62,8 +62,8 @@ dependence is confined to the cross-origin demo.
 ### 1. Run it
 
 ```bash
-npm install           # npm workspaces — see CLAUDE.md for why not pnpm
-npm run dev          # backend :3000, frontend :4200, partner demo :4201
+pnpm install          # pnpm, not npm — see CONTRIBUTING notes in CLAUDE.md
+pnpm run dev          # backend :3000, frontend :4200, partner demo :4201
 ```
 
 Open http://localhost:4200 and sign in with a seeded account:
@@ -142,9 +142,9 @@ frontend never talks to Supabase, the Gemini key never reaches our servers, and
 roles are enforced server-side on every request.
 
 ```bash
-npm test          # shared + backend unit + frontend
-npm run test:e2e  # backend e2e — a separate config, not included above
-npm run build     # shared -> backend -> frontend, then the SEO origin stamp
+pnpm test          # shared + backend unit + frontend
+pnpm run test:e2e  # backend e2e — a separate config, not included above
+pnpm run build     # shared -> backend -> frontend, then the SEO origin stamp
 ```
 
 `.github/workflows/ci.yml` runs exactly that gate on every push. It needs no
@@ -155,13 +155,13 @@ import time, so the app boots and runs its e2e suite without credentials.
 
 ## Deploying
 
-The target is Firebase App Hosting, but `server.mjs` is a plain Node server, so
-any host that can run `npm ci && npm run build && npm start` will do.
+The target is a container on Cloud Run. `server.mjs` is a plain Node server that
+reads `$PORT`, so any host that can run a Docker image will do.
 
 Check it locally first — this is the whole deploy in one command:
 
 ```bash
-npm run build && node server.mjs        # :8080
+pnpm run build && node server.mjs        # :8080
 
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' localhost:8080/           # 200 text/html
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' localhost:8080/api/health  # 200 application/json
@@ -171,51 +171,72 @@ curl -s localhost:8080/ | grep -o 'ng-server-context="[^"]*"'                   
 
 That last one matters more than it looks — see *Allowed hosts* below.
 
-### Firebase App Hosting
+### Why a Dockerfile and not Firebase App Hosting
 
-`apphosting.yaml` and `firebase.json` are committed. Both the build and the run
-command are stated outright rather than left to framework detection, because this
-repository is an npm workspace with no framework at its root.
+App Hosting failed to build this repository three times, each for a different
+reason inside its Node buildpack, none reproducible locally:
+
+1. It reads `engines.pnpm` as a **range** and installs the highest match while
+   ignoring `packageManager`, so `">=10"` selected pnpm 12 — whose branch in the
+   buildpack launches the standalone binary from a path that only exists in the
+   npm package layout. `MODULE_NOT_FOUND`.
+2. Capped at pnpm 9, `pnpm install` died with `Cannot convert undefined or null
+   to object` in ~314ms, before any network fetch —
+   [firebase-tools#10435](https://github.com/firebase/firebase-tools/issues/10435),
+   filed for pnpm monorepos and **closed as not planned**.
+3. Migrated to npm, the install succeeded and the *build* failed:
+   `npm run build --workspace=@actuo/shared` reported `No workspaces found` in
+   the builder's tree, though it resolves everywhere else.
+
+All three are the builder disagreeing with a workspace monorepo. The Dockerfile
+ends the category — the image runs the same commands that run locally. The npm
+migration was reverted; this repo is on pnpm.
+
+### Cloud Run
 
 ```bash
-firebase login
-firebase apphosting:backends:create --project <PROJECT_ID> --location <REGION>
-#   root directory: /        (the repository root — see below)
-
-# Each prompts for the value and grants the backend access:
-firebase apphosting:secrets:set actuo-supabase-service-role-key
-firebase apphosting:secrets:set actuo-jwt-access-secret
-firebase apphosting:secrets:set actuo-jwt-refresh-secret
-
-firebase deploy --only apphosting        # deploys from this local checkout
+gcloud run deploy actuo \
+  --source . \
+  --region asia-east1 \
+  --allow-unauthenticated \
+  --port 8080 \
+  --set-env-vars NG_ALLOWED_HOSTS='*.run.app',SUPABASE_URL=https://<ref>.supabase.co,BASE_CURRENCY=INR \
+  --set-secrets SUPABASE_SERVICE_ROLE_KEY=actuo-supabase-service-role-key:latest,\
+JWT_ACCESS_SECRET=actuo-jwt-access-secret:latest,\
+JWT_REFRESH_SECRET=actuo-jwt-refresh-secret:latest
 ```
 
-Set `SUPABASE_URL` in `apphosting.yaml` to your own project before deploying.
+`--source .` picks up the `Dockerfile` rather than guessing a buildpack. The
+service account needs `roles/secretmanager.secretAccessor` on those three
+secrets; if they were created with `firebase apphosting:secrets:set` they already
+exist in the same project's Secret Manager and only the grant is missing.
 
-**Root directory must be `/`.** App Hosting looks for the lockfile at the root
-directory it is given, so keeping it at the repository root puts
-`package-lock.json` where the installer expects it
-([firebase-tools#7478](https://github.com/firebase/firebase-tools/issues/7478)
-covers the subdirectory case).
+`NODE_ENV=production` is set in the image, not here — `EnvService.partnerOrigin`
+reads it to drop its `localhost:4201` default, which would otherwise make
+`/agent` embed an iframe pointing at each visitor's own machine.
 
-**This project is on npm because App Hosting could not build it with pnpm.**
-`pnpm install` fails inside the buildpack with `Cannot convert undefined or null
-to object` — [firebase-tools#10435](https://github.com/firebase/firebase-tools/issues/10435),
-filed for pnpm monorepos and closed as not planned. It does not reproduce
-locally. If the npm build hits a comparable wall, nothing needs rewriting:
-`node server.mjs` is a plain Node server and runs on Cloud Run, Render or Fly
-unchanged.
+**`PUBLIC_ORIGIN` is a build argument, not a runtime variable** (the next section
+says why). `--source .` does not forward build args, so to bake absolute URLs,
+build and push explicitly first:
+
+```bash
+docker build --build-arg PUBLIC_ORIGIN=https://your-host -t <region>-docker.pkg.dev/<project>/<repo>/actuo .
+docker push <region>-docker.pkg.dev/<project>/<repo>/actuo
+gcloud run deploy actuo --image <region>-docker.pkg.dev/<project>/<repo>/actuo --region <region>
+```
+
+Left unset, every URL stays root-relative — valid, just not absolute.
 
 ### Set `PUBLIC_ORIGIN` too
 
 The public pages are prerendered, so absolute URLs — the sitemap's `<loc>`,
 `og:image`, `canonical` — have to be decided at build time. `index.html`,
 `sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that
-`scripts/stamp-seo.mjs` replaces as the last step of `npm run build`. Unset,
+`scripts/stamp-seo.mjs` replaces as the last step of `pnpm run build`. Unset,
 everything stays root-relative and valid; set, it becomes absolute.
 
 ```bash
-PUBLIC_ORIGIN=https://your-host npm run build
+PUBLIC_ORIGIN=https://your-host pnpm run build
 grep -o '<loc>[^<]*</loc>' frontend/dist/frontend/browser/sitemap.xml
 ```
 
@@ -224,7 +245,7 @@ grep -o '<loc>[^<]*</loc>' frontend/dist/frontend/browser/sitemap.xml
 Angular 21 refuses to server-render a request whose `Host` header is not on an
 allowlist (SSRF protection). Off the list it does **not** error: it quietly falls
 back to client-side rendering, which throws away the SSR and structured-data work
-on the public pages. `NG_ALLOWED_HOSTS` in `apphosting.yaml` is that list, and it
+on the public pages. `NG_ALLOWED_HOSTS` on the Cloud Run service is that list, and it
 *replaces* the build-time list in `angular.json` rather than adding to it.
 
 After any deploy, confirm the HTML for `/` contains `ng-server-context`. If it

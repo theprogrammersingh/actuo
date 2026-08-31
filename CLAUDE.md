@@ -14,7 +14,7 @@ Build order is PRD §10 Phase 0, scoped WebMCP-demo-first.
 Source of truth docs live in `docs/`: `Actuo-PRD.md` (features, WebMCP coverage map,
 data model), `Actuo-Design-Doc.md` (Aurora Ledger visual identity), and
 `Actuo-Project-Initialisation.md` (setup — partly superseded: it predates both
-Tailwind v4 and the move to npm workspaces, so follow the commands here rather than there).
+Tailwind v4 and the move to pnpm, so follow the commands here rather than there).
 
 ## What Actuo is
 
@@ -83,40 +83,39 @@ repo, and several commits legitimately say they changed it.
 
 ## Commands
 
-**This repo uses npm workspaces.** It used pnpm until the App Hosting build
-proved unable to install it — see "Why the package manager is npm" below before
-proposing a switch back.
+**This repo uses pnpm.** Do not run `npm install` — it would create a competing
+`package-lock.json` and a hoisted `node_modules` that hides missing dependency
+declarations (see "Why pnpm changes things" below).
 
 ```bash
-npm install            # `npm ci` is the CI form: exact lockfile, no re-resolution
-npm run dev            # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
-npm run build          # shared -> backend -> frontend, in that order
-npm test               # shared + backend + frontend unit tests
-npm run test:e2e       # backend e2e
+pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
+pnpm run dev           # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
+pnpm run build         # shared -> backend -> frontend, in that order
+pnpm test              # backend + frontend unit tests
+pnpm run test:e2e      # backend e2e
 ```
 
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
 
 ```bash
 # backend: one file, or one test by name
-npm exec --workspace=backend -- vitest run src/app.controller.spec.ts
-npm exec --workspace=backend -- vitest run -t "routing contract"
-npm run test:e2e --workspace=backend
+pnpm --filter backend exec vitest run src/app.controller.spec.ts
+pnpm --filter backend exec vitest run -t "routing contract"
+pnpm --filter backend run test:e2e
 
 # frontend: MUST go through ng test, which is the @angular/build:unit-test builder
-npm run test --workspace=frontend
-npm exec --workspace=frontend -- ng test --no-watch --filter "ToolRegistry"
+pnpm --filter frontend run test
+pnpm --filter frontend exec ng test --no-watch --filter "ToolRegistry"
 ```
 
 The name filter is `--filter` (a regex over suite and test names). It is **not**
 `--test-name-pattern` — that is vitest's own flag, and the Angular builder rejects
 it outright with `Unknown argument`.
 
-`frontend`'s `test` script already carries `--no-watch`, deliberately: package
-managers disagree about how a bare `--` is forwarded, and Angular's builder
-rejects an empty argument with a schema error. Keeping the flag inside the script
-makes it behave the same under any of them. Use `test:watch` for the watching
-variant.
+`frontend`'s `test` script already carries `--no-watch`, deliberately: npm swallows a
+bare `--` while pnpm forwards it to Angular as an empty argument, which the builder
+rejects with a schema error. Keeping the flag inside the script makes it behave the
+same under any package manager. Use `test:watch` for the watching variant.
 
 **Do not run the frontend suite with bare `npx vitest`.** Angular's builder generates the
 TestBed bootstrap (`init-testbed.js`) as part of the test build; without it every spec that
@@ -128,8 +127,8 @@ and `frontend/tsconfig.spec.json`, or the `WebMCP` namespace resolves in the app
 fails in the test build.
 
 `shared/` must be built before either consumer — a missing `shared/dist` shows up as
-`TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `npm run dev`
-and `npm run build` handle the ordering.
+`TS2307: Cannot find module '@actuo/shared'` in *both* builds at once. `pnpm run dev`
+and `pnpm run build` handle the ordering.
 
 ## Layout
 
@@ -145,48 +144,32 @@ that ship as **one** Firebase App Hosting deploy: a single Node process routes
 `/api/*` to Nest and everything else to Angular's SSR handler. That process is
 `server.mjs` at the repo root — see "The deploy" below.
 
-## Why the package manager is npm (and what that costs)
+## Why pnpm changes things
 
-**npm is here because of the deploy, not by preference.** The repo ran on pnpm
-and pnpm is the better tool for this shape of project. App Hosting could not
-build it: `pnpm install` dies inside the buildpack with `Cannot convert undefined
-or null to object` in ~314ms, before any network fetch. That is
-firebase-tools#10435, open against pnpm monorepos on every pnpm version, and
-**closed as not planned**. It does not reproduce locally under any pnpm 9 or 10,
-cold store, or buildpack environment variable. `apphosting.yaml` carries the full
-history. Do not "restore pnpm" without checking that issue first — it is not a
-preference that was lost, it is a deploy that does not build.
+The workspace manifest is **`pnpm-workspace.yaml`**, not a `workspaces` field in
+`package.json`. Add a new package there.
 
-The workspace manifest is the **`workspaces` array in the root `package.json`**.
-Add a new package there. There is no `pnpm-workspace.yaml` any more, and
-`onlyBuiltDependencies` is gone with it: npm runs dependency lifecycle scripts by
-default, so argon2, `@swc/core`, esbuild and lightningcss build without a list.
+pnpm links only what a package *declares*, with no hoisting. That is stricter than npm
+and it immediately exposed two real bugs npm had been masking:
 
-**What npm loses, and what to do about it.** pnpm links only what a package
-declares. That strictness caught two real bugs npm had been masking:
-
-- `@actuo/shared` was imported by 52 files and declared as a dependency
-  **nowhere**; it resolved only because npm hoists every workspace package into
-  the root `node_modules`.
-- `shared` never declared `typescript`, yet its build script runs `tsc`. It was
+- **`@actuo/shared` was imported by 52 files but declared as a dependency nowhere.** It
+  resolved only because npm hoists every workspace package into the root `node_modules`.
+  Both consumers now declare `"@actuo/shared": "workspace:*"`.
+- **`shared` never declared `typescript`**, yet its build script runs `tsc`. It was
   borrowing the root's binary.
 
-Both are fixed in the manifests and must stay fixed — but **nothing enforces them
-now.** Under npm's hoisted `node_modules` an undeclared dependency resolves
-happily and fails only somewhere else later. So when adding an import, check that
-some `package.json` actually declares it; the install will not tell you.
+So: if an import resolves, some package.json must say so. A missing declaration now
+fails loudly at install or build time instead of working by accident.
 
-`@actuo/shared` is linked by npm from the `workspaces` array, so
-`"@actuo/shared": "*"` in `backend` and `frontend` resolves to the local package,
-not the registry. It is `"*"` rather than pnpm's `workspace:*` because npm has no
-such protocol and treats it as an invalid range.
+**`onlyBuiltDependencies` in `pnpm-workspace.yaml` is load-bearing.** pnpm blocks
+dependency lifecycle scripts by default, so native bindings never get built — esbuild,
+`@swc/core` (which vitest needs for Nest DI), `argon2`, and `lightningcss` all fail in
+different, confusing ways if dropped from that list. Add a package there when a new
+native dependency appears.
 
-The lightningcss problem npm used to have is gone: npm 11 records every platform
-variant in the lockfile, so `lightningcss-linux-x64-gnu`, `@esbuild/linux-x64`
-and `@swc/core-linux-x64-gnu` are all present for the Linux build machine even
-though this one is arm64 macOS. No `optionalDependencies` pin is needed. Verify
-after any lockfile regeneration — a build machine missing a native binary is the
-failure this prevents.
+pnpm also fixes the lightningcss problem npm had: it records every platform variant in
+the lockfile and installs the matching one, so the explicit `optionalDependencies` pin
+npm needed is gone.
 
 ## Tooling facts that differ from the planning docs
 
@@ -258,16 +241,38 @@ fallback only.
 there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which is
 exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
 dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
-`/partner-demo/` path exists on a different origin; `npm run dev` starts it as a
+`/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
 third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
 by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
 app's own origin, `/agent` says so instead of showing an empty list.
 
 ## The deploy
 
-`server.mjs` at the repo root is the production entry point: `npm start`, and
-what `apphosting.yaml`'s `runCommand` names. It imports the two build outputs and
-composes them in one process.
+**`Dockerfile` + Cloud Run, not Firebase App Hosting.** App Hosting failed to
+build this repo three times, each for a different reason inside its Node
+buildpack and none reproducible locally:
+
+1. It reads `engines.pnpm` as a *range* and installs the highest match, ignoring
+   `packageManager` — so `">=10"` selected pnpm 12, whose branch in the buildpack
+   launches the standalone binary from `bin/dist/pnpm.mjs`, a path that exists
+   only in the npm package layout. `MODULE_NOT_FOUND`.
+2. Capped at pnpm 9, `pnpm install` died with `Cannot convert undefined or null
+   to object` in ~314ms — before any network fetch, so a config parse. That is
+   firebase-tools#10435, filed for pnpm monorepos on any pnpm version and
+   **closed as not planned**. Five local variations install cleanly.
+3. Migrated to npm, the install succeeded and the *build* failed:
+   `npm run build --workspace=@actuo/shared` reported `No workspaces found` in
+   the builder's tree though it resolves everywhere else. That migration was
+   reverted; the repo is on pnpm.
+
+All three are the builder disagreeing with a workspace monorepo, so the fix was
+to stop using a builder. `apphosting.yaml` and `firebase.json` are deleted — they
+are in git history if App Hosting is ever revisited, but check #10435 first.
+
+`server.mjs` at the repo root is the production entry point and needed no change
+through any of it: a plain Node server reading `$PORT`, which is why Cloud Run
+takes it as-is. It imports the two build outputs and composes them in one
+process.
 
 - It appends the Angular handler to **Nest's own Express instance**, after Nest's
   routes. That works only because `setGlobalPrefix('/api')` scopes Nest's
@@ -276,24 +281,14 @@ composes them in one process.
   spec breaks, the deploy is broken too, in a way that returns the app shell for
   a bad API call.
 - The built Angular SSR bundle is **self-contained** (only `node:` imports;
-  Express is bundled in) and serves `dist/browser` itself. So the repo root needs
-  no runtime dependency, and `node_modules` there stays at two dev packages.
+  Express is bundled in) and serves `dist/browser` itself. That is why the
+  runtime stage copies no `frontend/node_modules`.
 - `createNodeRequestHandler` returns its argument unchanged, so the exported
   `reqHandler` *is* the Express app and mounts directly as middleware.
 
-**The buildpack resolves an `engines.<pm>` range to the newest published match,
-and ignores `packageManager`.** That is how `engines.pnpm: ">=10"` silently
-selected pnpm 12 and broke the build. So there is deliberately **no
-`engines.npm`** — unset, the buildpack uses the npm bundled with the Node
-runtime, which is the best-tested path through it. Adding an `engines.npm` range
-re-opens exactly the failure mode that cost two builds.
-
-**Never give `NODE_ENV` BUILD availability in `apphosting.yaml`.** The buildpack
-installs production-only under `NODE_ENV=production`, dropping
-every devDependency — and this build *is* devDependencies: the Angular CLI, the
-Nest CLI, typescript. Nothing in the build reads `NODE_ENV` anyway (Angular
-takes `production` from `angular.json`); the single reader in the repo is
-`EnvService.partnerOrigin`, per request, at runtime.
+**The Dockerfile does not prune.** `pnpm prune --prod` was tried: in a workspace
+it prompts, and then leaves `@angular/cli` and `typescript` in place anyway. A
+larger image beats a step that silently half-works.
 
 **`NG_ALLOWED_HOSTS` is load-bearing, and it fails silently.** Angular 21 checks
 the `Host` header against an allowlist (SSRF protection). Off the list it does not
@@ -301,17 +296,20 @@ error — it falls back to **client-side rendering**, quietly discarding the SSR
 structured-data work in PRD §8.5. The env var *replaces* the build-time list in
 `angular.json` (`getAllowedHostsFromEnv() ?? options.allowedHosts`), so a deploy
 must list every hostname it answers on. The port is stripped before matching, and
-`*.example.com` wildcards work. Verify with: the HTML for `/` contains
-`ng-server-context`. `angular.json` carries `localhost` so `node server.mjs`
-renders locally.
+`*.example.com` wildcards match by suffix (`isHostAllowed` turns `*.x` into
+`hostname.endsWith('.x')`), so one wildcard covers a multi-label host. Verify
+with: the HTML for `/` contains `ng-server-context`. `angular.json` carries
+`localhost` so `node server.mjs` renders locally.
 
-**`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one.** The public pages
-are prerendered, so absolute URLs — `<loc>` in the sitemap, `og:image`,
-`canonical` — must be decided before the build finishes. `index.html`,
-`sitemap.xml` and `robots.txt` carry a `__PUBLIC_ORIGIN__` sentinel that survives
-prerendering into every generated file, and `scripts/stamp-seo.mjs` replaces it
-across `dist/frontend/browser` as the last step of `npm run build`. Unset, it
-substitutes `''` and everything stays root-relative and valid.
+**`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one** — a `Dockerfile`
+`ARG`, not an `ENV` on the service. The public pages are prerendered, so absolute
+URLs — `<loc>` in the sitemap, `og:image`, `canonical` — must be decided before
+the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
+`__PUBLIC_ORIGIN__` sentinel that survives prerendering into every generated
+file, and `scripts/stamp-seo.mjs` replaces it across `dist/frontend/browser` as
+the last step of `pnpm run build`. Unset, it substitutes `''` and everything
+stays root-relative and valid. It must carry the scheme: the value is
+substituted verbatim, so a bare hostname yields a `<loc>` that is not a URL.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and
@@ -322,6 +320,9 @@ re-registers WebMCP tools on each load.
 **`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.partnerOrigin`
 drops its `http://localhost:4201` default, because serving that from a deployed
 instance makes `/agent` embed an iframe pointing at each visitor's own machine.
+It is set in the runtime stage of the Dockerfile, and deliberately NOT at build
+time — a production-flagged install drops devDependencies, and the build is
+almost entirely devDependencies.
 
 ## The expense workflow is one table, shared
 

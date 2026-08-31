@@ -13,8 +13,8 @@
  * in dev and in production, so `PARTNER_DEMO_ORIGIN` is the only thing that
  * changes between them. Deliberately dependency-free
  * (`node:http` + `node:fs`): a static file server is not worth a package, and
- * every dependency added here is another way for `npm run dev` to fail on a
- * fresh clone, for a process that only exists to serve three static files.
+ * pnpm blocks lifecycle scripts by default, so every added dependency is a new
+ * way for `pnpm run dev` to fail on a fresh clone.
  *
  *   node scripts/partner-server.mjs        # :4201
  *   PORT=5001 node scripts/partner-server.mjs

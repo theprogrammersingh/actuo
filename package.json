@@ -2,29 +2,26 @@
   "name": "actuo",
   "version": "0.0.1",
   "private": true,
-  "workspaces": [
-    "shared",
-    "backend",
-    "frontend"
-  ],
   "description": "AI-native expense intelligence platform with a universal WebMCP Copilot",
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "pnpm": ">=9.0.0 <10.0.0"
   },
   "scripts": {
-    "dev": "npm run build:shared && concurrently -n backend,frontend,partner -c blue,magenta,yellow \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:partner\"",
-    "dev:backend": "npm run start:dev --workspace=backend",
-    "dev:frontend": "npm run start --workspace=frontend",
+    "dev": "pnpm run build:shared && concurrently -n backend,frontend,partner -c blue,magenta,yellow \"pnpm run dev:backend\" \"pnpm run dev:frontend\" \"pnpm run dev:partner\"",
+    "dev:backend": "pnpm --filter backend run start:dev",
+    "dev:frontend": "pnpm --filter frontend run start",
     "dev:partner": "node scripts/partner-server.mjs",
-    "build:shared": "npm run build --workspace=@actuo/shared",
-    "build": "npm run build:shared && npm run build --workspace=backend && npm run build --workspace=frontend && npm run build:seo",
+    "build:shared": "pnpm --filter @actuo/shared run build",
+    "build": "pnpm run build:shared && pnpm --filter backend run build && pnpm --filter frontend run build && pnpm run build:seo",
     "build:seo": "node scripts/stamp-seo.mjs",
     "start": "node server.mjs",
-    "test": "npm run test --workspace=@actuo/shared && npm run test --workspace=backend && npm run test --workspace=frontend",
-    "test:e2e": "npm run test:e2e --workspace=backend"
+    "test": "pnpm --filter @actuo/shared run test && pnpm --filter backend run test && pnpm --filter frontend run test",
+    "test:e2e": "pnpm --filter backend run test:e2e"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",
     "supabase": "^2.116.0"
-  }
+  },
+  "packageManager": "pnpm@9.15.5+sha512.845196026aab1cc3f098a0474b64dfbab2afe7a1b4e91dd86895d8e4aa32a7a6d03049e2d0ad770bbe4de023a7122fb68c1a1d6e0d033c7076085f9d5d4800d4"
 }

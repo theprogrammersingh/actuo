@@ -1,0 +1,38 @@
+# Anything here is excluded from the build context. Two reasons it matters:
+# a host node_modules copied into the image would be the WRONG platform's native
+# binaries (arm64 macOS vs linux/amd64), and the context is uploaded on every
+# build, so a stale dist/ costs time on every push.
+
+node_modules
+**/node_modules
+
+dist
+**/dist
+.angular
+frontend/.angular
+
+.git
+.github
+.gitignore
+
+# Secrets never belong in an image layer. .env.example is fine and stays.
+.env
+**/.env
+**/.env.local
+
+# Planning docs and trackers change constantly and would bust the context cache
+# for no benefit to a running container.
+docs
+*.md
+!README.md
+
+.vscode
+**/.vscode
+.DS_Store
+**/.DS_Store
+
+# The scratch outputs of local tooling.
+coverage
+**/coverage
+*.log
+npm-debug.log*

@@ -42,7 +42,7 @@ async function* walk(dir) {
 }
 
 if (!existsSync(BROWSER_DIST)) {
-  console.error(`[seo] ${BROWSER_DIST} is missing. Run \`npm run build\` first.`);
+  console.error(`[seo] ${BROWSER_DIST} is missing. Run \`pnpm run build\` first.`);
   process.exit(1);
 }
 

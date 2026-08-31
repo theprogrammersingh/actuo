@@ -1,0 +1,18 @@
+packages:
+  - shared
+  - backend
+  - frontend
+
+# Native binaries whose install scripts must be allowed to run. pnpm blocks
+# lifecycle scripts by default; without these, esbuild and the SWC/argon2
+# bindings never get built and the builds fail with missing-binary errors.
+onlyBuiltDependencies:
+  - '@parcel/watcher'
+  - '@swc/core'
+  - argon2
+  - esbuild
+  - lightningcss
+  - lmdb
+  - msgpackr-extract
+  - supabase
+  - unrs-resolver
