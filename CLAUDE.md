@@ -248,7 +248,7 @@ app's own origin, `/agent` says so instead of showing an empty list.
 
 ## The deploy
 
-**`Dockerfile` + Cloud Run, not Firebase App Hosting.** App Hosting failed to
+**`Dockerfile` + Render, not Firebase App Hosting.** App Hosting failed to
 build this repo three times, each for a different reason inside its Node
 buildpack and none reproducible locally:
 
@@ -270,9 +270,17 @@ to stop using a builder. `apphosting.yaml` and `firebase.json` are deleted — t
 are in git history if App Hosting is ever revisited, but check #10435 first.
 
 `server.mjs` at the repo root is the production entry point and needed no change
-through any of it: a plain Node server reading `$PORT`, which is why Cloud Run
-takes it as-is. It imports the two build outputs and composes them in one
-process.
+through any of it: a plain Node server reading `$PORT` and binding `0.0.0.0`,
+which is why the image runs unmodified on Render, Cloud Run or Fly. It imports
+the two build outputs and composes them in one process.
+
+`render.yaml` is the Blueprint Render builds from — it names the Dockerfile,
+`/api/health` as the probe, and every environment variable except the three
+secrets, which are `sync: false` and prompted for once at creation. **Render
+translates a service env var into a Docker build argument**, which is the only
+reason `PUBLIC_ORIGIN` can be declared there alongside the runtime ones; the
+Dockerfile declares `ARG PUBLIC_ORIGIN` to receive it. Changing it needs a
+*rebuild*, not a restart — a runtime variable cannot reach prerendered HTML.
 
 - It appends the Angular handler to **Nest's own Express instance**, after Nest's
   routes. That works only because `setGlobalPrefix('/api')` scopes Nest's
@@ -302,7 +310,8 @@ with: the HTML for `/` contains `ng-server-context`. `angular.json` carries
 `localhost` so `node server.mjs` renders locally.
 
 **`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one** — a `Dockerfile`
-`ARG`, not an `ENV` on the service. The public pages are prerendered, so absolute
+`ARG`. On Render it is declared as a normal env var only because Render turns
+those into build args; on any other host it needs an explicit `--build-arg`. The public pages are prerendered, so absolute
 URLs — `<loc>` in the sitemap, `og:image`, `canonical` — must be decided before
 the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
 `__PUBLIC_ORIGIN__` sentinel that survives prerendering into every generated

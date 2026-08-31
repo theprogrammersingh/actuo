@@ -276,7 +276,7 @@ and the offline banner appearing and clearing on the network events.
 
 | Item | Status | Notes |
 |---|---|---|
-| **Public deployed URL** | 🟡 | The deploy path is **built and verified locally**: `server.mjs` composes Nest under `/api` with the Angular SSR handler, and a `Dockerfile` builds and runs it. Both builder stages plus the runtime boot were simulated locally — `/api/health` 200, `/api/*` 404 as JSON, `ng-server-context` present. Firebase App Hosting was abandoned after three distinct buildpack failures against this workspace monorepo (see README *Why a Dockerfile*). What is left is the actual `gcloud run deploy`, which needs an interactive Google login |
+| **Public deployed URL** | 🟡 | The deploy path is **built and verified locally**: `server.mjs` composes Nest under `/api` with the Angular SSR handler, and a `Dockerfile` builds and runs it. Both builder stages plus the runtime boot were simulated locally — `/api/health` 200, `/api/*` 404 as JSON, `ng-server-context` present. The target is Render via `render.yaml`; Firebase App Hosting was abandoned after three distinct buildpack failures against this workspace monorepo (see README *Why a Dockerfile*). What is left is creating the Render Blueprint, which needs an interactive login and the three secrets |
 | README | ✅ | Root `README.md`: what is WebMCP-specific and where, the flag setup, what works without it, and the deploy steps. Workspace READMEs are still starter boilerplate |
 | Demo video | ⬜ | The script is the "What to look at" list in `README.md` |
 | Demo video | ⬜ | — |

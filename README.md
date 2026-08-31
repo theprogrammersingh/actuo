@@ -155,8 +155,9 @@ import time, so the app boots and runs its e2e suite without credentials.
 
 ## Deploying
 
-The target is a container on Cloud Run. `server.mjs` is a plain Node server that
-reads `$PORT`, so any host that can run a Docker image will do.
+The target is Render, running the committed `Dockerfile`. `server.mjs` is a
+plain Node server that reads `$PORT` and binds `0.0.0.0`, so any host that takes
+a container will do.
 
 Check it locally first — this is the whole deploy in one command:
 
@@ -192,40 +193,50 @@ All three are the builder disagreeing with a workspace monorepo. The Dockerfile
 ends the category — the image runs the same commands that run locally. The npm
 migration was reverted; this repo is on pnpm.
 
-### Cloud Run
+### Render
+
+`render.yaml` is a Blueprint: Render builds the committed `Dockerfile` and runs
+it. There is no framework detection anywhere in the path.
+
+1. Render Dashboard → **New** → **Blueprint** → point it at this repository.
+2. It reads `render.yaml` and prompts for the three `sync: false` secrets —
+   `SUPABASE_SERVICE_ROLE_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`. They
+   are stored by Render and never committed.
+3. Apply. Subsequent pushes to the tracked branch redeploy automatically.
+
+Everything else — `NG_ALLOWED_HOSTS`, `PUBLIC_ORIGIN`, `SUPABASE_URL`,
+`BASE_CURRENCY` — is declared in `render.yaml`. Change `SUPABASE_URL` to your own
+project before the first deploy.
+
+**Not the free plan.** The Angular SSR build and the Nest build both run inside
+the image build, and free build memory is not enough. Free instances also spin
+down when idle, and the cold start here is an image pull plus a Nest boot.
+
+**`PUBLIC_ORIGIN` is build-time**, and works on Render without a `--build-arg`
+flag: Render translates a service environment variable into a Docker build
+argument, and the Dockerfile declares `ARG PUBLIC_ORIGIN` to receive it. It is
+set to `https://actuo.onrender.com`; change it when a custom domain is attached
+and **redeploy**, because a runtime variable cannot reach already-prerendered
+HTML.
+
+After the first deploy, the one check that matters:
 
 ```bash
-gcloud run deploy actuo \
-  --source . \
-  --region asia-east1 \
-  --allow-unauthenticated \
-  --port 8080 \
-  --set-env-vars NG_ALLOWED_HOSTS='*.run.app',SUPABASE_URL=https://<ref>.supabase.co,BASE_CURRENCY=INR \
-  --set-secrets SUPABASE_SERVICE_ROLE_KEY=actuo-supabase-service-role-key:latest,\
-JWT_ACCESS_SECRET=actuo-jwt-access-secret:latest,\
-JWT_REFRESH_SECRET=actuo-jwt-refresh-secret:latest
+curl -s https://actuo.onrender.com/ | grep -o 'ng-server-context="[^"]*"'
 ```
 
-`--source .` picks up the `Dockerfile` rather than guessing a buildpack. The
-service account needs `roles/secretmanager.secretAccessor` on those three
-secrets; if they were created with `firebase apphosting:secrets:set` they already
-exist in the same project's Secret Manager and only the grant is missing.
+Empty output means `NG_ALLOWED_HOSTS` does not cover the hostname and Angular has
+silently fallen back to client-side rendering — see *Allowed hosts* below.
 
-`NODE_ENV=production` is set in the image, not here — `EnvService.partnerOrigin`
-reads it to drop its `localhost:4201` default, which would otherwise make
-`/agent` embed an iframe pointing at each visitor's own machine.
+### Anywhere else
 
-**`PUBLIC_ORIGIN` is a build argument, not a runtime variable** (the next section
-says why). `--source .` does not forward build args, so to bake absolute URLs,
-build and push explicitly first:
+The image is the portable unit. `server.mjs` reads `$PORT` and binds `0.0.0.0`,
+so Cloud Run, Fly and Railway take it unchanged:
 
 ```bash
-docker build --build-arg PUBLIC_ORIGIN=https://your-host -t <region>-docker.pkg.dev/<project>/<repo>/actuo .
-docker push <region>-docker.pkg.dev/<project>/<repo>/actuo
-gcloud run deploy actuo --image <region>-docker.pkg.dev/<project>/<repo>/actuo --region <region>
+docker build --build-arg PUBLIC_ORIGIN=https://your-host -t actuo .
+docker run -p 8080:8080 -e NG_ALLOWED_HOSTS=localhost actuo
 ```
-
-Left unset, every URL stays root-relative — valid, just not absolute.
 
 ### Set `PUBLIC_ORIGIN` too
 
@@ -245,7 +256,7 @@ grep -o '<loc>[^<]*</loc>' frontend/dist/frontend/browser/sitemap.xml
 Angular 21 refuses to server-render a request whose `Host` header is not on an
 allowlist (SSRF protection). Off the list it does **not** error: it quietly falls
 back to client-side rendering, which throws away the SSR and structured-data work
-on the public pages. `NG_ALLOWED_HOSTS` on the Cloud Run service is that list, and it
+on the public pages. `NG_ALLOWED_HOSTS` in `render.yaml` is that list, and it
 *replaces* the build-time list in `angular.json` rather than adding to it.
 
 After any deploy, confirm the HTML for `/` contains `ng-server-context`. If it

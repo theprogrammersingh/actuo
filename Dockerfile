@@ -19,7 +19,8 @@
 # All three are the builder disagreeing with a workspace monorepo. A Dockerfile
 # ends the category: the build is the same commands that run locally, on an image
 # we pin. `server.mjs` needed no change for any of this — it is a plain Node
-# server that reads $PORT, which is why Cloud Run takes it as-is.
+# server that reads $PORT and binds 0.0.0.0, which is why it runs unmodified on
+# Render (see render.yaml), Cloud Run, Fly, or anything else that takes an image.
 
 # ---------------------------------------------------------------------------
 # builder — full image on purpose: argon2 and @swc/core are native, and the slim
@@ -48,6 +49,9 @@ COPY . .
 # PUBLIC_ORIGIN is BUILD-time, not runtime: the public pages are prerendered, so
 # `<loc>`, `og:image` and `canonical` are decided before this layer finishes.
 # Unset, scripts/stamp-seo.mjs leaves every URL root-relative and still valid.
+# On Render this arrives without a --build-arg flag: Render translates a service
+# environment variable of the same name into a build argument, which is why
+# render.yaml can declare it alongside the runtime ones.
 ARG PUBLIC_ORIGIN=""
 ENV PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
 
@@ -60,8 +64,8 @@ RUN pnpm run build
 # and then leaves @angular/cli and typescript in place anyway, so it costs a
 # rebuild and buys nothing. The runtime stage therefore copies the full tree.
 # That is a larger image in exchange for a step that cannot silently half-work —
-# the wrong trade only if image size starts to matter, which for one Cloud Run
-# service it does not.
+# the wrong trade only if image size starts to matter, which for a single
+# always-on web service it does not.
 
 # ---------------------------------------------------------------------------
 # runner — slim, no toolchain, no sources.
@@ -78,10 +82,10 @@ ENV PORT=8080
 
 # Angular 21 checks the Host header against an allowlist (SSRF protection) and
 # off the list it does NOT error — it silently falls back to client-side
-# rendering, discarding the SSR and structured-data work in PRD §8.5. Override
-# this with the real hostname at deploy time. Verify with: the HTML for `/`
-# contains `ng-server-context`.
-ENV NG_ALLOWED_HOSTS="*.run.app,*.hosted.app,localhost"
+# rendering, discarding the SSR and structured-data work in PRD §8.5. This is a
+# fallback for running the image bare; the deploy sets the real list (render.yaml
+# does). Verify with: the HTML for `/` contains `ng-server-context`.
+ENV NG_ALLOWED_HOSTS="*.onrender.com,*.run.app,localhost"
 
 # pnpm's node_modules is a tree of symlinks into node_modules/.pnpm, so the
 # store has to come across whole and with links preserved. shared/ is copied in

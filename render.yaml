@@ -1,0 +1,85 @@
+# Render Blueprint — the deploy target.
+#
+# Render builds the committed `Dockerfile` directly, which is the whole reason it
+# is the target: Firebase App Hosting failed three times inside its Node
+# buildpack, each time for a different reason and none reproducible locally (the
+# Dockerfile header has the three, and README has the issue links). Nothing in
+# this file is framework detection — the image is built and run as written.
+#
+# Create it once with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# The three `sync: false` values below are prompted for during that flow and are
+# never committed.
+
+services:
+  - name: actuo
+    type: web
+    runtime: docker
+    # Closest region to the demo's users and to the Supabase project. Moving it
+    # is a dashboard change, not a code one.
+    region: singapore
+    # NOT `free`: the Angular SSR build and the Nest build run in the same image
+    # build, and the free plan's build memory is not enough for them. Free
+    # instances also spin down when idle, and a cold start here is a Nest boot
+    # behind an image pull.
+    plan: starter
+
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    # `/api/health` is @Public() — it is the one route that answers before any
+    # credential exists, which is what makes it usable as a probe. A 5xx here
+    # means Nest booted but its own health route is failing, not that a secret
+    # is missing; EnvService raises at call time, so a bad secret surfaces on the
+    # routes that need it rather than as a container that will not start.
+    healthCheckPath: /api/health
+
+    envVars:
+      # Angular 21 checks the Host header against an allowlist (SSRF protection).
+      # Off the list it does NOT error — it silently falls back to client-side
+      # rendering, discarding the SSR and structured-data work in PRD §8.5. This
+      # REPLACES the build-time list in angular.json, so every hostname the
+      # service answers on has to be here. Matching is by suffix, so one wildcard
+      # covers `actuo.onrender.com` and any preview hostname.
+      #
+      # Verify after deploying: the HTML for `/` must contain `ng-server-context`.
+      # If it does not, this value is wrong and the site is rendering client-side.
+      - key: NG_ALLOWED_HOSTS
+        value: "*.onrender.com"
+
+      # BUILD-TIME, and it works here only because Render translates a service
+      # env var into a Docker build argument automatically — the Dockerfile
+      # declares `ARG PUBLIC_ORIGIN` to receive it. The public pages are
+      # prerendered, so `<loc>`, `og:image` and `canonical` are baked before the
+      # image finishes; there is no request to derive an origin from.
+      #
+      # It must carry the scheme: stamp-seo.mjs substitutes the value verbatim,
+      # so a bare hostname produces a `<loc>` that is not a URL. Change this when
+      # a custom domain is attached, and redeploy — a rebuild is required, since
+      # a runtime variable cannot reach prerendered HTML.
+      - key: PUBLIC_ORIGIN
+        value: https://actuo.onrender.com
+
+      # Not a credential; the service-role key below is.
+      - key: SUPABASE_URL
+        value: https://dfzgtalbqtcadgupwklo.supabase.co
+
+      - key: BASE_CURRENCY
+        value: INR
+
+      # Prompted once at Blueprint creation, then stored by Render. Never
+      # committed, and deliberately not build-time: the build never touches
+      # Supabase or signs a token, and a secret readable at build time is a
+      # secret in the build logs.
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+
+      # PARTNER_DEMO_ORIGIN is deliberately absent. It must be an origin that is
+      # NOT this app's, or the cross-origin WebMCP demo proves nothing — /agent
+      # explains that when it is unset, rather than rendering an empty card.
+
+# PORT is injected by Render and must not be set here. server.mjs reads it and
+# falls back to 8080, and binds 0.0.0.0 so the container is reachable.
