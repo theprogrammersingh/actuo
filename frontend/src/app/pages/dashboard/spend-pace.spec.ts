@@ -55,8 +55,12 @@ describe('expenseAmount', () => {
 });
 
 describe('isSpend', () => {
-  it.each(['draft', 'submitted', 'approved', 'reimbursed'] as const)('counts %s', (status) => {
+  it.each(['submitted', 'approved', 'reimbursed'] as const)('counts %s', (status) => {
     expect(isSpend(expense({ status }))).toBe(true);
+  });
+
+  it('excludes draft — uncommitted intent, not spend (aligns with server)', () => {
+    expect(isSpend(expense({ status: 'draft' }))).toBe(false);
   });
 
   it('excludes rejected — the org decided it will not bear that cost', () => {

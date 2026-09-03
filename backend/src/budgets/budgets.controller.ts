@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import type { Budget, BudgetStatus } from '@actuo/shared';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { BudgetsService } from './budgets.service.js';
-import { BudgetStatusQueryDto, CreateBudgetDto } from './dto/budget.dto.js';
+import { BudgetStatusQueryDto, CreateBudgetDto, UpdateBudgetDto } from './dto/budget.dto.js';
 
 @Controller('budgets')
 export class BudgetsController {
@@ -41,5 +41,15 @@ export class BudgetsController {
     @Body() dto: CreateBudgetDto,
   ): Promise<Budget> {
     return this.budgets.create(user, dto);
+  }
+
+  @Roles('owner', 'admin')
+  @Patch(':id')
+  update(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateBudgetDto,
+  ): Promise<Budget> {
+    return this.budgets.update(user, id, dto);
   }
 }

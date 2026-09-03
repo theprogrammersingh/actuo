@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Budget, BudgetStatus } from '@actuo/shared';
 import { EnvService } from '../config/env.service.js';
 import {
@@ -10,7 +10,7 @@ import {
   type OrgRepository,
 } from '../supabase/repositories.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
-import type { BudgetStatusQueryDto, CreateBudgetDto } from './dto/budget.dto.js';
+import type { BudgetStatusQueryDto, CreateBudgetDto, UpdateBudgetDto } from './dto/budget.dto.js';
 
 @Injectable()
 export class BudgetsService {
@@ -33,6 +33,12 @@ export class BudgetsService {
       period: dto.period ?? 'monthly',
       rollover: dto.rollover ?? false,
     });
+  }
+
+  async update(user: AuthenticatedUser, id: string, dto: UpdateBudgetDto): Promise<Budget> {
+    const existing = await this.budgets.findById(user.orgId, id);
+    if (!existing) throw new NotFoundException('Budget not found.');
+    return this.budgets.update(user.orgId, id, dto);
   }
 
   /**
@@ -70,6 +76,19 @@ export class BudgetsService {
     const categoryNames = new Map(categories.map((c) => [c.id, c.name]));
     const spendByCategory = new Map(spendRows.map((row) => [row.categoryId, row]));
 
+    // Rollover: only fetch previous-month spend if any budget uses it.
+    const hasRollover = budgets.some((b) => b.rollover);
+    let prevSpendByCategory = new Map<string | null, number>();
+    if (hasRollover) {
+      const prevWindow = resolvePreviousWindow(from);
+      const prevSpendRows = await this.expenses.sumByCategory(
+        user.orgId,
+        prevWindow.from,
+        prevWindow.to,
+      );
+      prevSpendByCategory = new Map(prevSpendRows.map((r) => [r.categoryId, r.total]));
+    }
+
     // Union of "has a budget" and "has spend", so neither side can hide a row.
     const keys = new Set<string | null>([
       ...budgets.map((b) => b.categoryId),
@@ -79,7 +98,17 @@ export class BudgetsService {
     const rows: BudgetStatus[] = [];
     for (const categoryId of keys) {
       const budget = budgets.find((b) => b.categoryId === categoryId);
-      const budgeted = budget?.amount ?? 0;
+      const declaredBudget = budget?.amount ?? 0;
+
+      // Rollover: carry = max(0, declaredBudget - prevSpent). Only unspent is
+      // carried forward, never overspend as debt. PRD §6.3.
+      let carryforward = 0;
+      if (budget?.rollover) {
+        const prevSpent = prevSpendByCategory.get(categoryId) ?? 0;
+        carryforward = round2(Math.max(0, declaredBudget - prevSpent));
+      }
+
+      const budgeted = round2(declaredBudget + carryforward);
       const spend = spendByCategory.get(categoryId);
       const spent = round2(spend?.total ?? 0);
 
@@ -90,6 +119,8 @@ export class BudgetsService {
             ? 'All categories'
             : (categoryNames.get(categoryId) ?? 'Uncategorised'),
         budgeted,
+        declaredBudget,
+        carryforward,
         spent,
         // Can go negative — that is the over-budget signal the UI colours red.
         remaining: round2(budgeted - spent),
@@ -109,6 +140,17 @@ export class BudgetsService {
       return b.utilization - a.utilization || b.spent - a.spent;
     });
   }
+}
+
+/** The previous calendar month, for rollover carry computation. */
+function resolvePreviousWindow(currentFrom: string): { from: string; to: string } {
+  const d = new Date(`${currentFrom}T00:00:00Z`);
+  const prevEnd = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0));
+  const prevStart = new Date(Date.UTC(prevEnd.getUTCFullYear(), prevEnd.getUTCMonth(), 1));
+  return {
+    from: isoDate(prevStart.toISOString()),
+    to: isoDate(prevEnd.toISOString()),
+  };
 }
 
 /** Defaults to the first and last day of the current month, in UTC. */

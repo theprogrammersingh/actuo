@@ -2,9 +2,11 @@ import { Injectable, inject } from '@angular/core';
 import {
   GENERATE_REPORT,
   GET_BUDGET_STATUS,
+  GET_SPEND_SUMMARY,
   SEARCH_EXPENSES,
   SUBMIT_EXPENSE,
   APPROVE_EXPENSE,
+  type AnalyticsSummary,
   type BudgetStatus,
   type Expense,
   type ExpensePage,
@@ -85,6 +87,7 @@ export class ExpenseTools {
           remaining: status.remaining,
           utilization: `${Math.round(status.utilization * 100)}%`,
           overBudget: status.utilization > 1,
+          atWarningThreshold: status.utilization >= 0.8 && status.utilization < 1,
           /*
            * Passed through so the model can qualify the figure instead of
            * stating a partial total as a complete one. `spent` excludes
@@ -94,6 +97,32 @@ export class ExpenseTools {
            */
           expensesNotCountedOtherCurrency: status.unconvertedCount,
         }));
+      },
+    };
+  }
+
+  /** Spend summary and per-category breakdown (PRD §6.6 Analytics). */
+  getSpendSummary(): ActuoTool<Record<string, never>> {
+    return {
+      contract: GET_SPEND_SUMMARY,
+      execute: async (_args, { signal }) => {
+        const summary = await this.api.get<AnalyticsSummary>('/analytics/summary', undefined, signal);
+        return {
+          month: summary.month,
+          currency: summary.currency,
+          monthSpend: summary.monthSpend,
+          previousMonthSpend: summary.previousMonthSpend,
+          monthOverMonthDelta:
+            summary.monthOverMonthDelta !== null
+              ? `${summary.monthOverMonthDelta > 0 ? '+' : ''}${summary.monthOverMonthDelta}%`
+              : 'N/A (no prior data)',
+          byCategory: summary.byCategory.map((cat) => ({
+            category: cat.categoryName,
+            spent: cat.spent,
+            share: `${Math.round(cat.share * 100)}%`,
+          })),
+          unconvertedCount: summary.unconvertedCount,
+        };
       },
     };
   }
@@ -152,6 +181,7 @@ export class ExpenseTools {
       this.searchExpenses(),
       this.submitExpense(),
       this.getBudgetStatus(),
+      this.getSpendSummary(),
       this.generateReport(),
     ] as unknown as ActuoTool<never>[];
   }

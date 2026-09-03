@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-09-03 · **Baseline:** 12 shared · 114 backend unit · 34 backend e2e · 803 frontend
+**Last audited:** 2026-09-03 · **Baseline:** 12 shared · 142 backend unit · 37 backend e2e · 815 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -118,18 +118,19 @@ alive. Always verify after — `pkill`'s exit status is not proof.
 
 **Verify:** create an expense, confirm it appears in the list and in `audit_log`.
 
-## §6.3 Budgets — 🟡
+## §6.3 Budgets — ✅
 
 | Item | Phase | Status | Notes |
 |---|---|---|---|
 | Per-category budgets | 1 | ✅ | `budgets.service.ts:status` unions budgeted and spent categories |
 | Per-team budgets | 2 | ⬜ | No team entity exists |
-| Threshold alerts (80%) | 1 | ⬜ | Utilization is computed and shown; no threshold, no alert, no notification |
-| Rollover vs reset | 1 | ⬜ | Column and DTO field exist, read by nothing — `status()` always computes a fresh calendar month. The Budgets form **no longer offers the checkbox**; `budgets.spec.ts` guards against it returning without the behaviour |
-| Budget creation UI | 1 | ✅ | A form on the Budgets page for owner/admin. `POST /budgets` inserts and a unique index makes a repeat a 409, so only categories without a budget are offered — **changing** an existing budget is still unsupported (no PATCH route) |
+| Threshold alerts (80%) | 1 | ✅ | `isNearBudget` in `budget-rollup.ts` (≥80% utilization), dashboard notice, "Nearing budget" badge in the list, `atWarningThreshold` in `get_budget_status` tool output |
+| Rollover vs reset | 1 | ✅ | `rollover` checkbox in the form. Carry logic in `budgets.service.ts:status()`: `effective = declared + max(0, prevDeclared − prevSpent)`. One prior month only, unspent is carried, overspend is never debt. 4 tests pin behaviour. UI shows carry: "₹50,000 + ₹8,000 carried" |
+| Budget creation/edit UI | 1 | ✅ | Upsert form on the Budgets page for owner/admin — POST new, PATCH existing. Edit button on each row. Rollover checkbox, carry amount display when > 0 |
 
 **Verify:** with a category over budget, confirm the bar turns danger-toned and
-the figure matches a hand-check against the expense rows.
+the figure matches a hand-check against the expense rows. At ≥80%, confirm
+"Nearing budget" badge appears and the dashboard notice fires.
 
 ## §6.4 Approvals — 🟡
 
@@ -191,12 +192,12 @@ day's rate; a row on a weekend names the preceding working day.
 |---|---|---|---|
 | Trend line | 1 | ✅ | Hand-rolled SVG in `spend-pace.ts`, no chart library |
 | Spend pace / forecast | 1 | ✅ | Straight-line projection, on-track/watch/over |
-| Spend by category | 1 | 🟡 | Only via `/budgets/status`; no standalone breakdown |
-| Month-over-month deltas | 1 | 🟡 | Computed for the pace benchmark; no delta tile |
+| Spend by category | 1 | ✅ | `GET /api/analytics/summary` returns `byCategory` with per-category spend and share. Also `get_spend_summary` WebMCP tool |
+| Month-over-month deltas | 1 | ✅ | `monthOverMonthDelta` in `AnalyticsSummary`, percentage change vs prior month (null when no prior data). Exposed in `get_spend_summary` tool output |
 | Team vs individual | 2 | ⬜ | — |
 | CSV export | 0 | ✅ | Chunked, cancellable, complete across pages |
 | **PDF export** | 2 | ⬜ | `pdf` is now **rejected** rather than silently answered with CSV. `shared/src/report-format-contract.spec.ts` pins the tool schema and the backend DTO to the same list |
-| `/api/analytics/*` | 1 | ⬜ | No controller; the dashboard derives everything client-side |
+| `/api/analytics/*` | 1 | ✅ | `backend/src/analytics/` module with `GET /api/analytics/summary`. Returns current/prior month totals, MoM delta, per-category breakdown, excluded counts. 7 unit tests |
 
 ## §6.7 Notifications — ⬜
 

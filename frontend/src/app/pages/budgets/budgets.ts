@@ -4,6 +4,7 @@ import {
   Component,
   PLATFORM_ID,
   computed,
+  effect,
   inject,
   resource,
   signal,
@@ -16,7 +17,9 @@ import { Badge, Button, Card, EmptyState, ErrorState, Input, ProgressBar, Skelet
 import { formatMoney } from '../../core/format/money.js';
 import { excludedNotice } from '../../core/expense/amount.js';
 import {
+  isNearBudget,
   isOverBudget,
+  nearBudget,
   overBudget,
   overspend,
   rollupBudgets,
@@ -106,11 +109,28 @@ import {
         <ul class="space-y-3">
           @for (budget of budgets(); track budget.categoryId ?? budget.categoryName) {
             <li class="rounded-xl border border-line bg-card p-4">
-              @if (isOver(budget)) {
-                <div class="mb-2">
-                  <ui-badge tone="danger" label="Over budget" />
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex-1">
+                  @if (isOver(budget)) {
+                    <div class="mb-2">
+                      <ui-badge tone="danger" label="Over budget" />
+                    </div>
+                  } @else if (isNear(budget)) {
+                    <div class="mb-2">
+                      <ui-badge tone="warning" label="Nearing budget" />
+                    </div>
+                  }
                 </div>
-              }
+                @if (mayManage() && budgetForCategory(budget.categoryId); as b) {
+                  <button
+                    type="button"
+                    class="text-xs text-muted underline hover:text-body"
+                    (click)="startEdit(b)"
+                  >
+                    Edit
+                  </button>
+                }
+              </div>
 
               <ui-progress-bar
                 [label]="budget.categoryName"
@@ -120,6 +140,9 @@ import {
 
               <p class="tabular mt-2 text-xs" data-money>
                 <span class="text-muted">{{ spentOfBudgeted(budget) }}</span>
+                @if (budget.carryforward > 0) {
+                  <span class="text-muted"> ({{ carryText(budget) }})</span>
+                }
                 <span aria-hidden="true" class="text-muted"> · </span>
                 <span [class]="remainingClass(budget)">{{ remainingText(budget) }}</span>
               </p>
@@ -137,20 +160,17 @@ import {
       @if (mayManage()) {
         <ui-card padding="lg" class="mt-6 block">
           <header uiCardHeader class="mb-4">
-            <h2 class="font-display text-lg font-semibold text-body">Set a budget</h2>
+            <h2 class="font-display text-lg font-semibold text-body">{{ formHeading() }}</h2>
             <p class="mt-1 text-sm text-muted">
-              A monthly amount for one category, or for the organization as a whole. Each can
-              have one budget, so only the categories without one are listed.
+              @if (editingBudget()) {
+                Update the monthly amount or change whether unused budget carries forward.
+              } @else {
+                A monthly amount for one category, or for the organization as a whole.
+              }
             </p>
           </header>
 
-          @if (unbudgeted().length === 0 && orgBudgetExists()) {
-            <p class="text-sm text-muted">
-              Every category already has a budget. Changing one is not supported yet — the API
-              creates budgets and does not replace them.
-            </p>
-          } @else {
-          <form class="grid gap-4 sm:grid-cols-[1fr_auto_auto] sm:items-end" (submit)="saveBudget($event)">
+          <form class="grid gap-4 sm:grid-cols-[1fr_auto_auto_auto] sm:items-end" (submit)="saveBudget($event)">
             <div>
               <label for="budget-category" class="mb-1.5 block text-sm font-medium text-body">
                 Category
@@ -162,13 +182,13 @@ import {
                        text-sm text-body transition-colors duration-150 ease-out
                        focus-visible:outline-2 focus-visible:-outline-offset-1
                        focus-visible:outline-brand-teal"
-                [value]="newCategoryId()"
-                (change)="newCategoryId.set($any($event.target).value)"
+                [value]="selectedCategoryId()"
+                (change)="selectCategory($any($event.target).value)"
               >
-                @if (!orgBudgetExists()) {
+                @if (showOrgWideOption()) {
                   <option value="">All categories</option>
                 }
-                @for (category of unbudgeted(); track category.id) {
+                @for (category of selectableCategories(); track category.id) {
                   <option [value]="category.id">{{ category.name }}</option>
                 }
               </select>
@@ -186,10 +206,33 @@ import {
               />
             </div>
 
+            <div class="flex items-center gap-2 pb-3">
+              <input
+                id="budget-rollover"
+                type="checkbox"
+                class="size-4 rounded border-line bg-surface text-brand-teal
+                       focus-visible:outline-2 focus-visible:-outline-offset-1
+                       focus-visible:outline-brand-teal"
+                [checked]="rollover()"
+                (change)="rollover.set($any($event.target).checked)"
+              />
+              <label for="budget-rollover" class="text-sm text-body">Roll over unused</label>
+            </div>
+
             <button uiButton type="submit" [loading]="saving()" [disabled]="!newAmount().trim()">
-              Save budget
+              {{ editingBudget() ? 'Update' : 'Save' }}
             </button>
           </form>
+
+          @if (editingBudget()) {
+            <button
+              type="button"
+              class="mt-3 text-sm text-muted underline hover:text-body"
+              (click)="cancelEdit()"
+            >
+              Cancel editing
+            </button>
+          }
 
           @if (formMessage(); as message) {
             <p
@@ -200,7 +243,6 @@ import {
             >
               {{ message }}
             </p>
-          }
           }
         </ui-card>
       }
@@ -240,12 +282,52 @@ export class Budgets {
   protected readonly orgBudgetExists = computed(() =>
     this.existing().some((budget) => budget.categoryId === null),
   );
-  protected readonly newCategoryId = signal('');
+
+  /** The budget currently being edited, or null when creating a new one. */
+  protected readonly editingBudget = signal<Budget | null>(null);
+  /** The category selected in the dropdown when not editing. */
+  private readonly newCategoryId = signal('');
   protected readonly newAmount = signal('');
+  protected readonly rollover = signal(false);
   protected readonly saving = signal(false);
   protected readonly formMessage = signal<string | null>(null);
   protected readonly formFailed = signal(false);
   protected readonly amountError = signal<string | null>(null);
+
+  /** Categories available in the dropdown: unbudgeted ones, plus the one being edited. */
+  protected readonly selectableCategories = computed(() => {
+    const editing = this.editingBudget();
+    const taken = new Set(this.existing().map((b) => b.categoryId));
+    return this.categories().filter((category) => {
+      if (editing && category.id === editing.categoryId) return true;
+      return !taken.has(category.id);
+    });
+  });
+
+  /** The category ID shown in the select — the editing one, or user's selection. */
+  protected readonly selectedCategoryId = computed(() => {
+    const editing = this.editingBudget();
+    if (editing) return editing.categoryId ?? '';
+    return this.newCategoryId();
+  });
+
+  /** Whether the "All categories" option should appear in the dropdown. */
+  protected readonly showOrgWideOption = computed(() => {
+    const editing = this.editingBudget();
+    // Show if editing the org-wide budget, or if no org-wide budget exists yet
+    return (editing && editing.categoryId === null) || !this.orgBudgetExists();
+  });
+
+  protected readonly formHeading = computed(() => {
+    const editing = this.editingBudget();
+    if (editing) {
+      const name = editing.categoryId
+        ? this.categories().find((c) => c.id === editing.categoryId)?.name ?? 'category'
+        : 'all categories';
+      return `Edit budget for ${name}`;
+    }
+    return 'Set a budget';
+  });
 
   constructor() {
     // Categories only matter to someone who can set a budget, and only in the
@@ -267,6 +349,40 @@ export class Budgets {
     }
   }
 
+  protected selectCategory(value: string): void {
+    // When switching categories, if the target has an existing budget, switch to edit mode.
+    const categoryId = value || null;
+    const budget = this.existing().find((b) => b.categoryId === categoryId);
+    if (budget) {
+      this.startEdit(budget);
+    } else {
+      this.editingBudget.set(null);
+      this.newCategoryId.set(value);
+      this.newAmount.set('');
+      this.rollover.set(false);
+    }
+  }
+
+  protected startEdit(budget: Budget): void {
+    this.editingBudget.set(budget);
+    this.newAmount.set(String(budget.amount));
+    this.rollover.set(budget.rollover);
+    this.formMessage.set(null);
+  }
+
+  protected cancelEdit(): void {
+    this.editingBudget.set(null);
+    this.newCategoryId.set('');
+    this.newAmount.set('');
+    this.rollover.set(false);
+    this.formMessage.set(null);
+  }
+
+  /** Finds the budget for a category, so the template can offer an edit button. */
+  protected budgetForCategory(categoryId: string | null): Budget | undefined {
+    return this.existing().find((b) => b.categoryId === categoryId);
+  }
+
   protected async saveBudget(event: Event): Promise<void> {
     event.preventDefault();
     this.formMessage.set(null);
@@ -278,28 +394,37 @@ export class Budgets {
       return;
     }
 
+    const editing = this.editingBudget();
     this.saving.set(true);
     try {
-      await this.api.post<Budget>('/budgets', {
-        // '' is the org-wide budget, which the DTO expects as null rather than
-        // an empty string.
-        categoryId: this.newCategoryId() || null,
-        amount: Math.round(amount * 100) / 100,
-        period: 'monthly',
-        // No `rollover`: nothing reads the flag — `status()` always computes a
-        // fresh calendar month — so the form stopped offering it (PRD §6.3).
-      });
+      if (editing) {
+        // PATCH existing budget
+        await this.api.patch<Budget>(`/budgets/${editing.id}`, {
+          amount: Math.round(amount * 100) / 100,
+          rollover: this.rollover(),
+        });
+        this.formMessage.set('Budget updated.');
+      } else {
+        // POST new budget
+        await this.api.post<Budget>('/budgets', {
+          categoryId: this.selectedCategoryId() || null,
+          amount: Math.round(amount * 100) / 100,
+          period: 'monthly',
+          rollover: this.rollover(),
+        });
+        this.formMessage.set('Budget saved.');
+      }
       this.formFailed.set(false);
-      this.formMessage.set('Budget saved.');
-      this.newAmount.set('');
       this.newCategoryId.set('');
-      // The bars are server-computed, so the figures have to come back from it,
-      // and the dropdown has to drop the category that now has one.
+      this.newAmount.set('');
+      this.rollover.set(false);
+      this.editingBudget.set(null);
+      // Reload bars and the existing list.
       this.data.reload();
       void this.loadCategories();
     } catch (error) {
       this.formFailed.set(true);
-      this.formMessage.set(describeBudgetFailure(error));
+      this.formMessage.set(describeBudgetFailure(error, !!editing));
     } finally {
       this.saving.set(false);
     }
@@ -398,6 +523,10 @@ export class Budgets {
     return isOverBudget(status);
   }
 
+  protected isNear(status: BudgetStatus): boolean {
+    return isNearBudget(status);
+  }
+
   protected spentOfBudgeted(status: BudgetStatus): string {
     return `${this.money(status.spent, status)} of ${this.money(status.budgeted, status)}`;
   }
@@ -416,20 +545,28 @@ export class Budgets {
     return formatMoney(amount, status.currency);
   }
 
+  /** Explains that budgeted includes carry: "₹50,000 + ₹8,000 carried". */
+  protected carryText(status: BudgetStatus): string {
+    return `${this.money(status.declaredBudget, status)} + ${this.money(status.carryforward, status)} carried`;
+  }
+
   reload(): void {
     this.data.reload();
   }
 }
 
 /** Actionable, never blaming (Design Doc §3.6). */
-function describeBudgetFailure(error: unknown): string {
+function describeBudgetFailure(error: unknown, isUpdate = false): string {
   if (error instanceof ApiError) {
-    if (error.status === 403) return 'Only an owner or admin can set a budget.';
+    if (error.status === 403) return 'Only an owner or admin can manage budgets.';
+    if (error.status === 404) return 'That budget no longer exists.';
     if (error.status === 409) {
-      return 'That category already has a budget. Changing an existing one is not supported yet.';
+      return 'That category already has a budget.';
     }
-    if (error.status === 0) return 'Actuo didn’t respond, so nothing was saved. Try again.';
+    if (error.status === 0) return "Actuo didn't respond, so nothing was saved. Try again.";
     if (error.message) return error.message;
   }
-  return 'That budget could not be saved. Nothing was changed.';
+  return isUpdate
+    ? 'That budget could not be updated. Nothing was changed.'
+    : 'That budget could not be saved. Nothing was changed.';
 }

@@ -2,21 +2,28 @@ import type { BudgetStatus } from '@actuo/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
+  isNearBudget,
   isOverBudget,
+  nearBudget,
   overBudget,
   overspend,
   rollupBudgets,
   sortBudgets,
   utilizationPercent,
+  WARN_THRESHOLD,
 } from './budget-rollup.js';
 
 function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
-  const budgeted = overrides.budgeted ?? 10000;
+  const declaredBudget = overrides.declaredBudget ?? overrides.budgeted ?? 10000;
+  const carryforward = overrides.carryforward ?? 0;
+  const budgeted = overrides.budgeted ?? declaredBudget + carryforward;
   const spent = overrides.spent ?? 3000;
   return {
     categoryId: 'cat-1',
     categoryName: 'Travel',
     budgeted,
+    declaredBudget,
+    carryforward,
     spent,
     remaining: budgeted - spent,
     utilization: budgeted > 0 ? spent / budgeted : Number.POSITIVE_INFINITY,
@@ -59,6 +66,41 @@ describe('isOverBudget / overspend', () => {
   it('reports the overshoot, and zero when there is none', () => {
     expect(overspend(budget({ budgeted: 1000, spent: 1250 }))).toBe(250);
     expect(overspend(budget({ budgeted: 1000, spent: 400 }))).toBe(0);
+  });
+});
+
+describe('isNearBudget / nearBudget (PRD §6.3 threshold alerts)', () => {
+  it('exports the threshold constant so callers can reference it', () => {
+    expect(WARN_THRESHOLD).toBe(0.8);
+  });
+
+  it('is true at exactly 80% utilization', () => {
+    expect(isNearBudget(budget({ budgeted: 1000, spent: 800 }))).toBe(true);
+  });
+
+  it('is true between 80% and 100%', () => {
+    expect(isNearBudget(budget({ budgeted: 1000, spent: 900 }))).toBe(true);
+  });
+
+  it('is false below the threshold', () => {
+    expect(isNearBudget(budget({ budgeted: 1000, spent: 790 }))).toBe(false);
+  });
+
+  it('is false once over budget — that is a different state', () => {
+    expect(isNearBudget(budget({ budgeted: 1000, spent: 1001 }))).toBe(false);
+  });
+
+  it('is false for a zero budget, rather than triggering on any spend', () => {
+    expect(isNearBudget(budget({ budgeted: 0, spent: 500 }))).toBe(false);
+  });
+
+  it('filters to only the categories nearing their limit', () => {
+    const rows = [
+      budget({ categoryId: 'a', budgeted: 1000, spent: 850 }), // near
+      budget({ categoryId: 'b', budgeted: 1000, spent: 500 }), // safe
+      budget({ categoryId: 'c', budgeted: 1000, spent: 1200 }), // over
+    ];
+    expect(nearBudget(rows).map((r) => r.categoryId)).toEqual(['a']);
   });
 });
 

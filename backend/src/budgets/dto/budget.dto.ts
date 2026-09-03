@@ -50,3 +50,15 @@ export class BudgetStatusQueryDto {
   @IsDateString()
   to?: string;
 }
+
+export class UpdateBudgetDto {
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(999_999_999.99)
+  amount?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  rollover?: boolean;
+}

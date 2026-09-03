@@ -28,6 +28,25 @@ export function isOverBudget(status: BudgetStatus): boolean {
   return status.spent > status.budgeted;
 }
 
+/** The utilization ratio at which a category is "nearing budget" (PRD §6.3). */
+export const WARN_THRESHOLD = 0.8;
+
+/**
+ * Whether a category is close to its budget but not yet over it.
+ * The threshold is 80% — high enough to mean something, low enough to act on.
+ */
+export function isNearBudget(status: BudgetStatus): boolean {
+  return (
+    status.budgeted > 0 &&
+    status.utilization >= WARN_THRESHOLD &&
+    !isOverBudget(status)
+  );
+}
+
+export function nearBudget(statuses: readonly BudgetStatus[]): BudgetStatus[] {
+  return statuses.filter(isNearBudget);
+}
+
 /** How much a category has overshot by. Zero when it has not. */
 export function overspend(status: BudgetStatus): number {
   return Math.max(status.spent - status.budgeted, 0);

@@ -74,7 +74,23 @@ export type ExpensePage = Page<Expense>;
 export interface BudgetStatus {
   categoryId: string | null;
   categoryName: string;
+  /**
+   * The effective budget: `declaredBudget + carryforward`. This is what
+   * utilization is measured against. For budgets without rollover, it equals
+   * `declaredBudget`.
+   */
   budgeted: number;
+  /**
+   * The declared budget amount, before any rollover adjustment. Separate from
+   * `budgeted` so the UI can state the carry explicitly: "₹50,000 + ₹8,000
+   * carried over".
+   */
+  declaredBudget: number;
+  /**
+   * Unspent budget carried from the previous period (PRD §6.3). Zero when
+   * rollover is off or the budget had no underspend to carry.
+   */
+  carryforward: number;
   spent: number;
   remaining: number;
   /** 0–1+; can exceed 1 when over budget. Drives the progress-bar color ramp. */
@@ -91,4 +107,37 @@ export interface BudgetStatus {
    * dollars to rupees is not. Zero once a real FX pass fills `converted_amount`.
    */
   unconvertedCount: number;
+}
+
+/** Spend breakdown by category for the analytics summary. */
+export interface CategorySpend {
+  categoryId: string | null;
+  categoryName: string;
+  /** Absolute spend in the org's base currency. */
+  spent: number;
+  /** Fraction of monthSpend this category represents (0–1). */
+  share: number;
+}
+
+/**
+ * Month-over-month analytics summary for the dashboard hero tile and the
+ * `get_analytics_summary` WebMCP tool.
+ */
+export interface AnalyticsSummary {
+  /** YYYY-MM of the reporting window. */
+  month: string;
+  /** Org's base currency (all figures are in this currency). */
+  currency: string;
+  /** Total approved spend in the current window. */
+  monthSpend: number;
+  /** Total approved spend in the previous window. */
+  previousMonthSpend: number;
+  /** Percentage change ((current/prev - 1) * 100); null when prev = 0. */
+  monthOverMonthDelta: number | null;
+  /** Spend by category, sorted descending by spent. */
+  byCategory: CategorySpend[];
+  /** Expenses excluded for lack of a converted amount. */
+  unconvertedCount: number;
+  /** Draft expenses not counted in spend (they are not approved). */
+  draftCount: number;
 }

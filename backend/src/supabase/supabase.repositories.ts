@@ -25,6 +25,7 @@ import type {
   AuditEntry,
   AuditLogRepository,
   BudgetRepository,
+  BudgetUpdateInput,
   CategorySpendRow,
   CreateExpenseInput,
   ExpenseQuery,
@@ -425,6 +426,17 @@ export class SupabaseBudgetRepository implements BudgetRepository {
     return (data ?? []).map(map.toBudget);
   }
 
+  async findById(orgId: string, id: string): Promise<Budget | null> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('budgets')
+      .select('*')
+      .eq('org_id', orgId)
+      .eq('id', id)
+      .maybeSingle();
+    return optional(data, error, map.toBudget, 'Budget lookup');
+  }
+
   async create(input: {
     orgId: string;
     categoryId: string | null;
@@ -445,6 +457,26 @@ export class SupabaseBudgetRepository implements BudgetRepository {
       .select('*')
       .single();
     if (error) fail(error, 'A budget for that category');
+    return map.toBudget(data);
+  }
+
+  async update(orgId: string, id: string, patch: BudgetUpdateInput): Promise<Budget> {
+    const row: Record<string, unknown> = {};
+    if (patch.amount !== undefined) row.amount = patch.amount;
+    if (patch.rollover !== undefined) row.rollover = patch.rollover;
+
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('budgets')
+      .update(row)
+      .eq('org_id', orgId)
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) {
+      if (error.code === PGRST_NO_ROWS) throw new NotFoundException('Budget not found.');
+      fail(error, 'Budget update');
+    }
     return map.toBudget(data);
   }
 }

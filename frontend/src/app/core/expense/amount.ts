@@ -1,4 +1,4 @@
-import type { Expense } from '@actuo/shared';
+import type { Expense, ExpenseStatus } from '@actuo/shared';
 
 /**
  * Which amount field counts, and which rows count at all.
@@ -40,16 +40,26 @@ export function expenseCurrency(expense: Expense): string {
 }
 
 /**
- * Whether a row counts as spend.
+ * Statuses that count as spend. Matches the server-side rule in
+ * `sumByCategory` so every surface agrees on the same total.
  *
- * Rejected expenses are excluded: the org decided it will not bear that cost,
- * so counting it would overstate every total. Drafts *are* counted — that money
- * has already left a person's pocket, it just has not been claimed yet, and
- * hiding it makes the dashboard disagree with the user's own wallet.
- * Soft-deleted rows are excluded defensively; the backend already filters them.
+ * - `submitted` — claimed but not yet decided
+ * - `approved` — the org has agreed to bear this cost
+ * - `reimbursed` — paid out, the final state
+ *
+ * Drafts are excluded: they are uncommitted intent, and counting them would
+ * make the dashboard disagree with `/budgets/status`. Rejected expenses are
+ * excluded: the org decided it will not bear that cost. Soft-deleted rows are
+ * excluded defensively; the backend already filters them.
  */
+const SPEND_STATUSES: ReadonlySet<ExpenseStatus> = new Set([
+  'submitted',
+  'approved',
+  'reimbursed',
+]);
+
 export function isSpend(expense: Expense): boolean {
-  return expense.status !== 'rejected' && expense.deletedAt === null;
+  return SPEND_STATUSES.has(expense.status) && expense.deletedAt === null;
 }
 
 /** A total, plus what it could not account for. */
