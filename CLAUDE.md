@@ -89,7 +89,7 @@ declarations (see "Why pnpm changes things" below).
 
 ```bash
 pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
-pnpm run dev           # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
+pnpm run dev           # shared, then backend (:3000) + frontend (:4200)
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
@@ -215,55 +215,71 @@ the PRD assumes that do **not** hold:
 Two live compatibility traps for any `getTools()` consumer:
 
 1. **`inputSchema` type varies by Chrome version.** Chrome 149–153 (most of the origin-trial
-   population, including the Chrome 152 on this machine) return it as a **serialized JSON
+   population, including the Chrome 151 on this machine) return it as a **serialized JSON
    string**; 154+ returns an object. Branch on `typeof` and guard the parse.
 2. **`title` may be an empty string**, not absent — `tool.title ?? tool.name` silently yields
    `""`. Use `tool.title || tool.name`. `annotations` genuinely may be absent.
 
-**Enabling native WebMCP** (Chrome 152): `chrome://flags/#enable-webmcp-testing`
+**Enabling native WebMCP** (Chrome 151 here): `chrome://flags/#enable-webmcp-testing`
 ("Enables the WebMCP API") and `chrome://flags/#devtools-webmcp-support`, or launch with
 `--enable-blink-features=WebMCP`.
 
-**Both traps are confirmed on this machine, not theoretical.** Driving
-`/partner-demo/` in the local Chrome 152 with WebMCP enabled:
-`getTools()` returned `typeof inputSchema === 'string'` for every tool, and
-`executeTool()` resolved to a JSON **string** rather than an object. `registerTool`
-with `exposedTo`, the `readOnlyHint` annotation, and `executeTool()` all work
-end to end. `parseInputSchema()` and `parseToolResult()` are what keep that
-working — do not "simplify" them away.
+**Both traps are confirmed on this machine, not theoretical.** Re-measured on
+2026-09-03 against the deployed converter (`https://cambiaro.programmersingh.dev`)
+framed from `localhost:4200` in Chrome **151** with WebMCP enabled — a genuine
+origin boundary, not a page this repo serves. `getTools({fromOrigins})` returned
+all seven of its tools with `typeof inputSchema === 'string'`, and
+`executeTool()` resolved to a JSON **string** rather than an object. So
+`registerTool` with `exposedTo`, the `readOnlyHint` annotation, `fromOrigins`
+discovery and `executeTool()` all work end to end across origins.
+`parseInputSchema()` and `parseToolResult()` are what keep that working — do not
+"simplify" them away.
+
+The same run proved the loop closes: `executeTool(convertCurrency, {amount:200,
+from:'EUR', to:'INR'})` returned `200 EUR = 22,018.00 INR (1 EUR = 110.09 INR,
+2 Sep 2026)` **and the embedded widget moved to that conversion** — which is what
+the other side marking those tools as changing its own UI buys. Annotations
+survive the boundary intact: its four answering tools rendered `Read-only` in
+`/agent` and its three UI-moving ones `Mutating`.
 
 **Cross-origin requires native Chrome.** `@mcp-b/webmcp-polyfill` rejects non-empty
 `fromOrigins`/`exposedTo` with `NotSupportedError`, so the polyfill is a same-origin
 fallback only.
 
-**Cross-origin also requires an actual second origin.** The partner page lives in
-`frontend/public/partner-demo/`, so it is *also* served by the app itself — and from
-there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which is
-exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
-dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
-`/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
-third pane.
+**Cross-origin also requires an actual second origin, and it must not be one we
+serve.** A page served by the app is marked `isCrossOrigin: false` by
+`normalizeRegisteredTool()`, which is exactly the set the Copilot filters out.
+This repo used to ship a synthetic partner page (`frontend/public/partner-demo/`)
+plus a static server on :4201 to give it a second origin; both are gone. They
+were only ever true on localhost, and a stand-in exercised in dev but never in
+production is how a path stays broken in one of them unnoticed.
 
-What the app frames is **`CONVERTER_URL`**, served to the browser by
-`GET /api/config` — so a deploy changes it without a rebuild. It replaced
-`PARTNER_DEMO_ORIGIN`, and it is a **full URL rather than a bare origin** because
-the two things it points at disagree on the path: the production converter serves
-at `/`, the local partner demo at `/partner-demo/`. Consumers derive the origin
+What the app frames is **`CONVERTER_URL`** (it replaced `PARTNER_DEMO_ORIGIN`),
+served to the browser by `GET /api/config` — so a deploy changes it without a
+rebuild. **Development and production now use the same real converter**; the dev
+default is the public one, which costs a network dependency and buys one code
+path instead of two.
+
+It is a **full URL rather than a bare origin** because a converter need not sit
+at the root of its host — a GitHub Pages *project* site is
+`<user>.github.io/<repo>/`, and only a custom domain puts it at `/` — and the
+`?actuo=` handshake is appended to it either way. Consumers derive the origin
 with `new URL(value).origin`; a second "path" variable that had to stay in step
 would be one too many. Non-http(s) values are rejected before the sanitizer
 bypass. When it equals the app's own origin, every surface says so instead of
-showing an empty list.
+showing an empty list. It is deliberately **not** defaulted in production: a
+deploy names the converter it trusts rather than inheriting one.
 
 **The `?actuo=` handshake is what makes any of it work.** A WebMCP tool is
 visible only to its own document unless registration names an origin in
 `exposedTo`, so the framed page has to be *told* which origin to expose to.
-`ConverterSession.frameUrl` appends `?actuo=<our origin>`, and both
-`frontend/public/partner-demo/index.html` and the production converter read it.
+`ConverterSession.frameUrl` appends `?actuo=<our origin>`, and the converter
+reads it and passes it to `registerTool`'s `exposedTo`.
 Sending it at runtime rather than hardcoding our hostname there means a deploy
 URL can change without a release on the other side.
 
 **`ConverterSession` owns the discovery lifecycle, not any page.** It used to
-belong to `/agent`, which was fine while one page framed one partner. With four
+belong to `/agent`, which was fine while one page framed one other origin. With four
 surfaces, page-owned teardown cleared the Copilot's remote tools while a frame
 was still mounted elsewhere. Two rules live there now: **only one frame at a
 time** (`getTools()` returns a descriptor per *window*, so two live frames
@@ -271,7 +287,7 @@ publish two tools called `convertCurrency`), and **reference-counted discovery**
 (during a route change Angular builds the incoming component before destroying
 the outgoing one, so clear-on-destroy would wipe what the new surface just
 found). `Copilot.discoverRemoteTools()` also dedupes by name now, which fixes
-the same duplicate-window bug for the partner page.
+the same duplicate-window bug wherever a second window publishes the same tools.
 
 ## The deploy
 
@@ -350,12 +366,13 @@ substituted verbatim, so a bare hostname yields a `<loc>` that is not a URL.
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and
 would undercut the promise that every read goes through an authenticated route.
-`navigationUrls` also excludes `/partner-demo/**`, which is a separate site that
-re-registers WebMCP tools on each load.
+`navigationUrls` no longer needs a `/partner-demo/**` exclusion — the converter
+is a different origin, which the service worker never sees.
 
-**`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.partnerOrigin`
-drops its `http://localhost:4201` default, because serving that from a deployed
-instance makes `/agent` embed an iframe pointing at each visitor's own machine.
+**`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.converterUrl`
+drops its development default, because a deploy should name the converter it
+trusts through `CONVERTER_URL` rather than silently framing a third party nobody
+chose. Unset, the converter surfaces say so.
 It is set in the runtime stage of the Dockerfile, and deliberately NOT at build
 time — a production-flagged install drops devDependencies, and the build is
 almost entirely devDependencies.
@@ -422,7 +439,7 @@ request; the access token deliberately carries no role claim.
   *human* can make, so it logs itself with the actor `agentInvoked` reports;
   everything else through the registry is an agent.
 - `pages/agent/` — `/agent`, the WebMCP surface made visible: browser support,
-  the cross-origin partner iframe and what it exposed, and the live invocation
+  the cross-origin converter iframe and what it exposed, and the live invocation
   log. The only consumer of `discoveredTools()` and `invocationLog()`.
 
 ## Thought signatures (Gemini 3 function calling)

@@ -75,8 +75,9 @@ FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 
 # NODE_ENV=production is read by EnvService.converterUrl, which drops its
-# localhost:4201 default here — otherwise the converter surfaces would embed an
-# iframe pointing at each visitor's own machine.
+# development default here. A deploy names the converter it trusts through
+# CONVERTER_URL rather than inheriting one; unset, the converter surfaces say
+# so instead of framing a third party nobody chose.
 ENV NODE_ENV=production
 ENV PORT=8080
 

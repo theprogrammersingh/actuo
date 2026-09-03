@@ -206,7 +206,7 @@ describe('Copilot', () => {
 
   /**
    * Cross-origin tools live only as long as the document that registered them.
-   * Keeping them on the menu after the partner iframe is gone means the model
+   * Keeping them on the menu after the converter iframe is gone means the model
    * keeps calling a document that no longer exists, and every call fails with
    * a confusing error instead of the tool simply not being offered.
    */
@@ -227,11 +227,11 @@ describe('Copilot', () => {
                 registerTool: vi.fn().mockResolvedValue(undefined),
                 getTools: vi.fn().mockResolvedValue([
                   {
-                    name: 'get_book_price',
-                    title: 'Get book price',
-                    description: 'Price of one book.',
+                    name: 'convertCurrency',
+                    title: 'Convert currency',
+                    description: 'Convert an amount between two currencies.',
                     inputSchema: { type: 'object', properties: {} },
-                    origin: 'https://pageturner.example',
+                    origin: 'https://cambiaro.example',
                     annotations: { readOnlyHint: true },
                   },
                   // Same-origin tools come back too and must be ignored: the
@@ -255,14 +255,14 @@ describe('Copilot', () => {
 
     it('keeps only genuinely cross-origin tools', async () => {
       const copilot = setupWithRemote();
-      await copilot.discoverRemoteTools(['https://pageturner.example']);
+      await copilot.discoverRemoteTools(['https://cambiaro.example']);
 
-      expect(copilot.crossOriginTools().map((t) => t.name)).toEqual(['get_book_price']);
+      expect(copilot.crossOriginTools().map((t) => t.name)).toEqual(['convertCurrency']);
     });
 
     it('forgets them when asked', async () => {
       const copilot = setupWithRemote();
-      await copilot.discoverRemoteTools(['https://pageturner.example']);
+      await copilot.discoverRemoteTools(['https://cambiaro.example']);
 
       copilot.clearRemoteTools();
 

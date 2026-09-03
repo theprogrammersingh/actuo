@@ -79,25 +79,28 @@ export class EnvService {
    * Base URL of the embedded currency converter (PRD §6.5, §7 cross-origin row),
    * or `''` when none is configured.
    *
-   * A full URL rather than a bare origin, because the two things this points at
-   * do not live at the same path: Cambiaro serves at `/`, and the local
-   * partner-demo fallback at `/partner-demo/`. Callers derive the origin for
-   * `getTools({fromOrigins})` with `new URL(value).origin`, so one value covers
-   * both without a second "path" variable to keep in step.
+   * A full URL rather than a bare origin, because a converter need not live at
+   * the root of its host: a GitHub Pages *project* site is served from
+   * `<user>.github.io/<repo>/`, and only a custom domain puts it at `/`. The
+   * `?actuo=` handshake has to be appended to a real URL in any case. Callers
+   * derive the origin for `getTools({fromOrigins})` with `new URL(value).origin`,
+   * so one value carries both without a second "path" variable to keep in step.
    *
-   * It has to be a *different* origin than the app or the cross-origin demo
+   * It has to be a *different* origin than the app, or the cross-origin path
    * proves nothing: `getTools()` would return same-origin tools and the Copilot
-   * filters every one of them out.
+   * filters every one of them out. The default satisfies that from localhost as
+   * well as from a deploy, which is why dev and production now run the same
+   * path rather than dev exercising a stand-in.
    *
-   * The localhost default is **development only**. Serving it from a deployed
-   * instance would embed an iframe pointing at each visitor's own machine — a
-   * broken frame on the surfaces whose job is to demonstrate cross-origin
-   * tools. Unset in production, those surfaces say so, which is true and
-   * useful.
+   * Production is deliberately **not** defaulted. A deploy should name the
+   * converter it trusts rather than inherit one, and unset the surfaces say so —
+   * which is true, and better than a silent third-party dependency nobody chose.
    */
   get converterUrl(): string {
     const configured = this.optional('CONVERTER_URL');
     if (configured) return configured;
-    return process.env['NODE_ENV'] === 'production' ? '' : 'http://localhost:4201/partner-demo/';
+    return process.env['NODE_ENV'] === 'production'
+      ? ''
+      : 'https://cambiaro.programmersingh.dev/';
   }
 }

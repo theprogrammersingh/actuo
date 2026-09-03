@@ -22,11 +22,12 @@ import { ToolRegistry } from '../../webmcp/tool-registry.js';
  * so neither did anything in the running app:
  *
  *  1. **Cross-origin tool use.** `Copilot.discoverRemoteTools()` was never
- *     called, and the partner page was served from Actuo's own origin — so even
- *     if it had been, every descriptor would have come back same-origin and been
- *     filtered out. This screen embeds the currency converter from its own
- *     origin (`CONVERTER_URL`, the local partner page on :4201 in dev) with
- *     `allow="tools"`, then asks `getTools({fromOrigins})` for what it exposes.
+ *     called, and the page it would have queried was served from Actuo's own
+ *     origin — so even if it had been, every descriptor would have come back
+ *     same-origin and been filtered out. This screen embeds the currency
+ *     converter from `CONVERTER_URL` with `allow="tools"`, then asks
+ *     `getTools({fromOrigins})` for what it exposes. That is a separately built,
+ *     independently deployed app, in development as well as on a deploy.
  *
  *     The frame and the discovery lifecycle belong to `ConverterSession`, not to
  *     this page: the converter also appears on `/convert`, the dashboard and

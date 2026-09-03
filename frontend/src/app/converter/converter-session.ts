@@ -17,8 +17,8 @@ const FRAMABLE_SCHEMES = new Set(['https:', 'http:']);
  * the cross-origin tool discovery that follows it around.
  *
  * Discovery used to belong to `/agent`, which was right while exactly one page
- * framed exactly one partner. The converter appears on four surfaces now, and
- * page-owned discovery breaks the moment two of them overlap: navigating away
+ * framed exactly one other origin. The converter appears on four surfaces now,
+ * and page-owned discovery breaks the moment two overlap: navigating away
  * from `/agent` called `clearRemoteTools()` and stripped the Copilot's
  * converter tools while a converter was still mounted and visible elsewhere.
  *
@@ -63,9 +63,9 @@ export class ConverterSession {
   /**
    * The origin to hand `getTools({fromOrigins})`.
    *
-   * Derived rather than configured separately: `CONVERTER_URL` carries a path
-   * (the converter at `/`, the local partner demo at `/partner-demo/`), and two
-   * variables that have to agree is one more than necessary.
+   * Derived rather than configured separately: `CONVERTER_URL` may carry a path
+   * — a converter need not sit at the root of its host — and two variables that
+   * have to agree is one more than necessary.
    */
   readonly converterOrigin = computed(() => {
     const value = this.url();
@@ -101,9 +101,9 @@ export class ConverterSession {
    * The URL to frame, with this origin passed along so the converter can expose
    * its tools back to us.
    *
-   * The `?actuo=` handshake is the same one `frontend/public/partner-demo/`
-   * uses: a WebMCP tool is same-origin unless registration names an origin in
-   * `exposedTo`, and the embedded page cannot know ours without being told.
+   * The `?actuo=` handshake is what the converter reads to decide who may call
+   * its tools: a WebMCP tool is same-origin unless registration names an origin
+   * in `exposedTo`, and the embedded page cannot know ours without being told.
    * Sending it at runtime rather than hardcoding it there means our hostname
    * can change without a release on the other side.
    */
@@ -216,7 +216,14 @@ export class ConverterSession {
   private teardown(): void {
     this.unsubscribeToolChange?.();
     this.unsubscribeToolChange = null;
-    this.openSurface.set(null);
+    /*
+     * `openSurface` is deliberately NOT cleared here. It is the user's intent —
+     * "show me the converter on this surface" — while the mount count is a
+     * resource. Coupling them broke going offline: the frame is released, this
+     * ran, the surface closed, and the panel vanished instead of rendering the
+     * "live rates need a connection" state. Coming back online then left it
+     * closed, because nothing had asked for it any more.
+     */
     /*
      * Without this the Copilot keeps offering `convertCurrency` to the model
      * after the document implementing it is gone, and every call fails with a

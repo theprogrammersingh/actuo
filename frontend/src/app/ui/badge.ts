@@ -39,7 +39,7 @@ const STATUS_LABEL: Record<ExpenseStatus, string> = {
  *
  * ```html
  * <ui-badge status="approved" />
- * <ui-badge tone="info" label="via partner-demo.app" />
+ * <ui-badge tone="info" label="via cambiaro.programmersingh.dev" />
  * ```
  *
  * The colour is carried by a dot *and* the text, and the text is always present,

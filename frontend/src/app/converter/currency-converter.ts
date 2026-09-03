@@ -95,8 +95,8 @@ import { ConverterSession } from './converter-session.js';
       } @else if (session.isResolved()) {
         <p class="text-sm text-muted">
           No converter is configured. Set <code class="font-mono">CONVERTER_URL</code> to the
-          origin serving one — locally that is
-          <code class="font-mono">pnpm run dev:partner</code> on :4201.
+          base URL of one — it has to be a different origin than this app, or the tools it
+          publishes come back same-origin and are filtered out.
         </p>
       }
     }

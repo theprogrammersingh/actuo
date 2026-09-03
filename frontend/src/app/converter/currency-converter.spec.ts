@@ -151,6 +151,43 @@ describe('CurrencyConverter', () => {
       expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
     });
 
+    /**
+     * The transition, not just the initial state. Creating the component while
+     * already offline was covered; *going* offline was not, and it was broken:
+     * releasing the frame tore the session down, which cleared the open surface,
+     * so the panel vanished rather than explaining itself — and coming back
+     * online left it closed because nothing was asking for it any more.
+     */
+    it('keeps the panel and explains itself when the connection drops', async () => {
+      await create();
+      expect(iframe()).not.toBeNull();
+
+      offline.set(true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(iframe()).toBeNull();
+      expect(text()).toContain('Live rates need a connection');
+      expect(session.isOpen('test')).toBe(true);
+    });
+
+    it('frames it again when the connection comes back', async () => {
+      await create();
+      offline.set(true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(iframe()).toBeNull();
+
+      offline.set(false);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(iframe()).not.toBeNull();
+    });
+
     it('names the flag when this browser has no WebMCP, and still frames it', async () => {
       registry.isSupported.set(false);
       await create();
@@ -168,7 +205,7 @@ describe('CurrencyConverter', () => {
     });
 
     it('explains a same-origin converter instead of discovering nothing', async () => {
-      await create({ converterUrl: `${SELF_ORIGIN}/partner-demo/` });
+      await create({ converterUrl: `${SELF_ORIGIN}/converter/` });
 
       expect(iframe()).toBeNull();
       expect(text()).toContain('cross-origin');

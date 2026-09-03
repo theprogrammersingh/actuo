@@ -78,9 +78,10 @@ services:
         sync: false
 
       # The embedded currency converter (PRD §6.5). A full URL, not a bare
-      # origin, because the converter serves at `/` while the local partner-demo
-      # fallback serves at `/partner-demo/` — one value covers both and
-      # consumers derive the origin from it with `new URL(...).origin`.
+      # origin, because a converter need not sit at the root of its host — a
+      # GitHub Pages project site is `<user>.github.io/<repo>/` — and the
+      # `?actuo=` handshake is appended to it. Consumers derive the origin with
+      # `new URL(...).origin` for `getTools({fromOrigins})`.
       #
       # It must NOT be this app's own origin: `getTools({fromOrigins})` would
       # return same-origin tools, which the Copilot filters out, and the

@@ -56,12 +56,13 @@ describe('ConverterSession', () => {
 
   describe('where the converter is', () => {
     it('derives the origin from a URL that carries a path', async () => {
-      const session = create('http://localhost:4201/partner-demo/');
+      // A converter need not sit at the root of its host — a GitHub Pages
+      // project site is `<user>.github.io/<repo>/`. One variable carries both;
+      // two that had to agree would be one too many.
+      const session = create('https://theprogrammersingh.github.io/cambiaro/');
       await session.ensureConfig();
 
-      // One variable covers both the converter (at /) and the local partner
-      // demo (at /partner-demo/); two that had to agree would be one too many.
-      expect(session.converterOrigin()).toBe('http://localhost:4201');
+      expect(session.converterOrigin()).toBe('https://theprogrammersingh.github.io');
       expect(session.isAvailable()).toBe(true);
     });
 
@@ -95,7 +96,7 @@ describe('ConverterSession', () => {
     });
 
     it('says so when the converter is on this app own origin', async () => {
-      const session = create(`${SELF_ORIGIN}/partner-demo/`);
+      const session = create(`${SELF_ORIGIN}/converter/`);
       await session.ensureConfig();
 
       // getTools() returns same-origin descriptors too, and the Copilot filters
@@ -250,7 +251,7 @@ describe('ConverterSession', () => {
     });
 
     it('does not discover a same-origin converter', async () => {
-      const session = create(`${SELF_ORIGIN}/partner-demo/`);
+      const session = create(`${SELF_ORIGIN}/converter/`);
       const release = session.acquire();
       await settle();
 

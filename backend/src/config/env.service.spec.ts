@@ -34,16 +34,20 @@ describe('EnvService', () => {
       ).toBe('https://cambiaro.programmersingh.dev/');
     });
 
-    it('falls back to the local partner server in development', () => {
-      // `pnpm run dev` starts it there, so the cross-origin path needs no setup.
-      expect(createEnv().converterUrl).toBe('http://localhost:4201/partner-demo/');
+    /**
+     * A real, public second origin, so the cross-origin path needs no setup and
+     * runs exactly as it does on a deploy. It used to be a stand-in served on
+     * :4201 from inside this repo; dev and production exercising different
+     * things is how a path stays broken in one of them without anyone noticing.
+     */
+    it('defaults to the public converter in development', () => {
+      expect(createEnv().converterUrl).toBe('https://cambiaro.programmersingh.dev/');
     });
 
     /**
-     * The bug this pins: a deployed instance serving `http://localhost:4201`
-     * would embed an iframe pointing at each *visitor's* own machine — a broken
-     * frame on the surfaces whose job is to demonstrate cross-origin tools.
-     * Empty means "not configured", and those surfaces say so.
+     * Production is not defaulted on purpose: a deploy should name the converter
+     * it trusts rather than inherit one. Empty means "not configured", and the
+     * converter surfaces say so instead of framing a third party nobody chose.
      */
     it('reports no URL at all in production when none is configured', () => {
       process.env['NODE_ENV'] = 'production';
@@ -52,19 +56,22 @@ describe('EnvService', () => {
 
     it('treats a blank value as unconfigured, not as configured-empty', () => {
       expect(createEnv({ CONVERTER_URL: '   ' }).converterUrl).toBe(
-        'http://localhost:4201/partner-demo/',
+        'https://cambiaro.programmersingh.dev/',
       );
     });
 
     /**
-     * The value carries a path, not just an origin, because the two things it
-     * points at do not agree on one: Cambiaro serves at `/` and the local
-     * partner demo at `/partner-demo/`. Consumers take the origin from it.
+     * The value is a full URL, not a bare origin, because a converter need not
+     * sit at the root of its host — a GitHub Pages *project* site is served from
+     * `<user>.github.io/<repo>/`. Consumers take the origin from it for
+     * `getTools({fromOrigins})` and keep the path for the frame src.
      */
-    it('keeps a path so one value covers both converter and partner demo', () => {
-      const url = createEnv({ CONVERTER_URL: 'https://cambiaro.programmersingh.dev/' }).converterUrl;
-      expect(new URL(url).origin).toBe('https://cambiaro.programmersingh.dev');
-      expect(new URL(createEnv().converterUrl).pathname).toBe('/partner-demo/');
+    it('carries a path through, for a converter not served at the root', () => {
+      const url = createEnv({
+        CONVERTER_URL: 'https://theprogrammersingh.github.io/cambiaro/',
+      }).converterUrl;
+      expect(new URL(url).origin).toBe('https://theprogrammersingh.github.io');
+      expect(new URL(url).pathname).toBe('/cambiaro/');
     });
   });
 

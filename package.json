@@ -8,10 +8,9 @@
     "pnpm": ">=9.0.0 <10.0.0"
   },
   "scripts": {
-    "dev": "pnpm run build:shared && concurrently -n backend,frontend,partner -c blue,magenta,yellow \"pnpm run dev:backend\" \"pnpm run dev:frontend\" \"pnpm run dev:partner\"",
+    "dev": "pnpm run build:shared && concurrently -n backend,frontend -c blue,magenta \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
     "dev:backend": "pnpm --filter backend run start:dev",
     "dev:frontend": "pnpm --filter frontend run start",
-    "dev:partner": "node scripts/partner-server.mjs",
     "build:shared": "pnpm --filter @actuo/shared run build",
     "build": "pnpm run build:shared && pnpm --filter backend run build && pnpm --filter frontend run build && pnpm run build:seo",
     "build:seo": "node scripts/stamp-seo.mjs",

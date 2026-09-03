@@ -210,7 +210,7 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | Confirmation before mutating tools | 0 | ✅ | In-chat card. PRD says "native dialog"; in-chat was chosen deliberately |
 | Key-setup flow when no key | 0 | ✅ | Opens into setup rather than failing silently |
 | Embeddable via one `<script>` | 3 | ⬜ | It is an Angular component inside the app shell |
-| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. In dev that is the partner page on :4201 (`scripts/partner-server.mjs`); in production it is an independently deployed converter, which is what makes the claim hold on the deployed URL. Verified in Chrome 151 with the flag on the partner page: both tools discovered, `executeTool()` returned a price cross-origin. **Not yet verified against the production converter** — see the rough edges |
+| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. The synthetic partner page and its :4201 server are gone: dev and production now frame the same independently deployed converter, so there is no cross-origin path that is only exercised in one of them. **Verified 2026-09-03 in Chrome 151 with the flag**, framing the deployed converter from `localhost:4200`: all seven of its tools discovered over a real origin boundary, badges correct (4 read-only / 3 mutating), and `executeTool(convertCurrency, {amount:200,from:'EUR',to:'INR'})` returned `200 EUR = 22,018.00 INR` with the embedded widget moving to match. Not yet run from a *deployed* Actuo — see the rough edges |
 
 ## §6.9 Admin & Settings — 🟡
 
@@ -232,8 +232,8 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
 | **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
-| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier setup unprovable |
-| Security annotations | ✅ | `readOnlyHint` on all five, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the partner-demo tools; shown as a badge on the tool-call card |
+| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier in-repo page unprovable. It is now a separately built, independently deployed app Actuo does not own, in dev as well as on a deploy |
+| Security annotations | ✅ | `readOnlyHint` on all five, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the converter's tools, whose results carry third-party rate data; shown as a badge on the tool-call card |
 | `getTools()` discovery | ✅ | Drives the cross-origin path and the `/agent` panel; re-runs on `toolchange`. The Copilot still reads its own registry for local tools, deliberately — see "the tool registry decision" |
 | `executeTool()` + manual debug panel | 🟡 | `executeTool()` done, and `/agent` renders `discoveredTools` and `invocationLog`. Still read-only: there is no form to invoke a tool by hand with arbitrary arguments |
 
@@ -249,8 +249,8 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 
 **`dataGroups` is empty on purpose** — caching `/api` would show stale money and
 would undercut the promise that every read goes through an authenticated route.
-`navigationUrls` also excludes `/partner-demo/**`, a separate site that
-re-registers its WebMCP tools on each load.
+`navigationUrls` no longer needs a `/partner-demo/**` exclusion — the converter
+is a different origin, which the service worker never sees.
 
 `PwaService` holds the deferred `beforeinstallprompt` and online/offline state;
 the shell renders an install banner and an offline banner from it. Verified live
@@ -323,14 +323,13 @@ the video, and Phase 1–3 features.
 
 ### Known rough edges, deliberately not fixed here
 
-- **The cross-origin path has not been run end to end against the production
-  converter.** The wiring is verified by 42 new specs and by the partner page in
-  Chrome 151, but nobody has yet loaded a deployed Actuo, framed the deployed
-  converter, and watched the Copilot call `convertCurrency` across the two real
-  origins. Two things have to be true first: the converter's `exposedTo` change
-  must be deployed, and `CONVERTER_URL` must be set on the Render service. Until
-  then the surfaces show their honest "no tools discovered from that origin yet"
-  state, which is correct but is not the demo.
+- **The cross-origin path has not been run end to end from a *deployed* Actuo.**
+  It is verified locally against the deployed converter (see §6.8), but nobody
+  has yet loaded Actuo on Render, framed the converter from there, and watched
+  the Copilot call `convertCurrency` across two public origins. What remains is
+  `CONVERTER_URL` on the service — the converter's `exposedTo` change is already
+  merged and live. Until then a deploy shows the honest "not configured" state,
+  which is correct but is not the demo.
 - **CI has never run on GitHub.** The workflow was verified by running its exact
   command sequence locally; `act` is not installed on this machine.
 - **Firebase App Hosting has an open issue with pnpm workspaces**
@@ -343,8 +342,8 @@ the video, and Phase 1–3 features.
   ~54px in a 65px slot at 390px, measured), but it is tight, and this was
   verified by measurement rather than at a real 390px viewport.
 - **No CSP header is set anywhere yet.** When one lands it will need `frame-src`
-  for the converter origin (`CONVERTER_URL`) *and* for the local partner origin,
-  or every converter surface breaks silently — an iframe blocked by CSP renders
+  for the converter origin (`CONVERTER_URL`) — one origin now, not two — or
+  every converter surface breaks silently: an iframe blocked by CSP renders
   empty with no error the page can see.
 - **Brand assets are generated, not designed.** `scripts/generate-brand-assets.mjs`
   produces the icons and og card from the palette with ImageMagick. They are

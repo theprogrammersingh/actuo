@@ -148,7 +148,7 @@ This table is the actual "learning checklist" — every row must have a concrete
 | **JSON Schema inputs** | Every tool above has a strict schema (enums for category/currency, required fields) |
 | **Dynamic/state-gated tools** | `approve_expense` tool only registered when the logged-in user has `admin`/`owner` role AND there's a pending item; listens to `toolchange` |
 | **Cancellation (`AbortSignal`)** | `generate_report` (long-running export) supports cancel mid-execution |
-| **Cross-origin tools** | Copilot widget embedded via iframe on a second, unrelated site (`exposedTo` / `fromOrigins` / `allow="tools"`) — served in production by an independently deployed currency converter, not a page this repo authored |
+| **Cross-origin tools** | The Copilot discovers and calls tools published by a **separately built, independently deployed app this repo does not own** (`exposedTo` / `fromOrigins` / `allow="tools"`), over a real origin boundary — in development as well as on the deployed URL. It is not a demo page authored here, which is what the earlier in-repo partner page could never be: served by the app, its tools came back same-origin and were filtered out |
 | **Security annotations** | `readOnlyHint` on read tools (`search_expenses`), `untrustedContentHint` / confirmation dialog on mutating tools |
 | **Tool discovery (`getTools`)** | Core of the Copilot widget itself |
 | **`executeTool()` + manual invocation** | Copilot's execution engine; also a debug panel for manually testing tools while developing |

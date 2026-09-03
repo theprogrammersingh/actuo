@@ -11,17 +11,17 @@ import type { ToolInvocation } from '../../webmcp/tool-registry.js';
 import { Agent } from './agent.js';
 
 const SELF_ORIGIN = globalThis.location.origin;
-/** CONVERTER_URL carries a path, so the origin is derived from it. */
-const CONVERTER_URL = 'http://localhost:4201/partner-demo/';
-const PARTNER = 'http://localhost:4201';
+/** CONVERTER_URL may carry a path, so the origin is derived from it. */
+const CONVERTER_URL = 'https://cambiaro.example/';
+const CONVERTER_ORIGIN = 'https://cambiaro.example';
 
 function remoteTool(overrides: Partial<NormalizedTool> = {}): NormalizedTool {
   return {
-    name: 'get_book_price',
-    title: 'Get book price',
-    description: 'Return the price of one book by its id.',
+    name: 'convertCurrency',
+    title: 'Convert currency',
+    description: 'Convert an amount from one currency to another.',
     inputSchema: { type: 'object', properties: {} },
-    origin: PARTNER,
+    origin: CONVERTER_ORIGIN,
     annotations: { readOnlyHint: true },
     isCrossOrigin: true,
     raw: {} as NormalizedTool['raw'],
@@ -109,12 +109,12 @@ describe('Agent tools page', () => {
      * The dead feature this page revives: `discoverRemoteTools()` existed,
      * worked and was tested, and nothing in the app ever called it.
      */
-    it('asks the configured partner origin for its tools', async () => {
+    it('asks the configured converter origin for its tools', async () => {
       await create();
-      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([PARTNER]);
+      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([CONVERTER_ORIGIN]);
     });
 
-    it('embeds the partner page with the tools permission the spec requires', async () => {
+    it('embeds the converter with the tools permission the spec requires', async () => {
       await create();
 
       const frame = iframe();
@@ -139,17 +139,17 @@ describe('Agent tools page', () => {
       listener();
       await fixture.whenStable();
 
-      // The partner page registers asynchronously after its own load, so the
+      // The converter registers asynchronously after its own load, so the
       // iframe's `load` event can fire before there is anything to find.
-      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([PARTNER]);
+      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([CONVERTER_ORIGIN]);
     });
 
     it('lists what it discovered, with the origin it came from', async () => {
       copilot.crossOriginTools.set([remoteTool()]);
       await create();
 
-      expect(text()).toContain('get_book_price');
-      expect(text()).toContain('localhost:4201');
+      expect(text()).toContain('convertCurrency');
+      expect(text()).toContain('cambiaro.example');
       expect(text()).toContain('Read-only');
     });
 
@@ -159,7 +159,7 @@ describe('Agent tools page', () => {
      * read as a bug; saying so is the honest failure.
      */
     it('explains itself instead of pretending, when the converter is same-origin', async () => {
-      await create(`${SELF_ORIGIN}/partner-demo/`);
+      await create(`${SELF_ORIGIN}/converter/`);
 
       expect(iframe()).toBeNull();
       expect(text()).toContain('CONVERTER_URL');
@@ -265,7 +265,7 @@ describe('Agent tools page', () => {
 
     it('marks a cross-origin call as one', async () => {
       registry.invocationLog.set([
-        invocation({ toolName: 'get_book_price', origin: 'cross-origin' }),
+        invocation({ toolName: 'convertCurrency', origin: 'cross-origin' }),
       ]);
       await create();
 
