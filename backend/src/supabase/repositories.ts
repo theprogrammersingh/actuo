@@ -201,8 +201,14 @@ export interface ExpenseRepository {
   }): Promise<Approval>;
 }
 
+export interface BudgetUpdateInput {
+  amount?: number;
+  rollover?: boolean;
+}
+
 export interface BudgetRepository {
   list(orgId: string): Promise<Budget[]>;
+  findById(orgId: string, id: string): Promise<Budget | null>;
   create(input: {
     orgId: string;
     categoryId: string | null;
@@ -210,6 +216,7 @@ export interface BudgetRepository {
     period: 'monthly';
     rollover: boolean;
   }): Promise<Budget>;
+  update(orgId: string, id: string, patch: BudgetUpdateInput): Promise<Budget>;
 }
 
 /**

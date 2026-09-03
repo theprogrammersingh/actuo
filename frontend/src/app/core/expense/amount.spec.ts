@@ -128,6 +128,22 @@ describe('sumSpend', () => {
     expect(sumSpend(rows).total).toBe(100);
   });
 
+  /**
+   * Aligns with the server-side rule in `sumByCategory`. Drafts are uncommitted
+   * intent, not spend — counting them would make the dashboard disagree with
+   * `/budgets/status`.
+   */
+  it('excludes drafts — uncommitted intent is not spend', () => {
+    const rows = [
+      expense({ id: 'a', amount: 500, status: 'draft' }),
+      expense({ id: 'b', amount: 300, status: 'submitted' }),
+    ];
+
+    expect(isSpend(rows[0])).toBe(false);
+    expect(isSpend(rows[1])).toBe(true);
+    expect(sumSpend(rows).total).toBe(300);
+  });
+
   it('is zero on an empty list', () => {
     expect(sumSpend([])).toEqual({ total: 0, excluded: 0 });
   });

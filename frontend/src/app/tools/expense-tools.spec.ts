@@ -91,6 +91,90 @@ describe('ExpenseTools', () => {
 
       expect(result[0]).toMatchObject({ category: 'Travel', utilization: '125%', overBudget: true });
     });
+
+    it('includes atWarningThreshold for categories nearing budget', async () => {
+      api.get.mockResolvedValue([
+        {
+          categoryId: 'cat-1',
+          categoryName: 'Travel',
+          budgeted: 10000,
+          declaredBudget: 10000,
+          carryforward: 0,
+          spent: 8500,
+          remaining: 1500,
+          utilization: 0.85,
+          currency: 'INR',
+          unconvertedCount: 0,
+        },
+      ]);
+
+      const result = (await tools.getBudgetStatus().execute(
+        {},
+        { signal: new AbortController().signal },
+      )) as Array<Record<string, unknown>>;
+
+      expect(result[0]).toMatchObject({
+        category: 'Travel',
+        utilization: '85%',
+        atWarningThreshold: true,
+        overBudget: false,
+      });
+    });
+  });
+
+  describe('get_spend_summary', () => {
+    it('calls /analytics/summary and reshapes for the model', async () => {
+      api.get.mockResolvedValue({
+        month: '2026-08',
+        currency: 'INR',
+        monthSpend: 25000,
+        previousMonthSpend: 20000,
+        monthOverMonthDelta: 25,
+        byCategory: [
+          { categoryId: 'cat-1', categoryName: 'Travel', spent: 15000, share: 0.6 },
+          { categoryId: 'cat-2', categoryName: 'Meals', spent: 10000, share: 0.4 },
+        ],
+        unconvertedCount: 0,
+        draftCount: 2,
+      });
+
+      const result = (await tools.getSpendSummary().execute(
+        {},
+        { signal: new AbortController().signal },
+      )) as Record<string, unknown>;
+
+      expect(api.get).toHaveBeenCalledWith('/analytics/summary', undefined, expect.any(AbortSignal));
+      expect(result).toMatchObject({
+        month: '2026-08',
+        currency: 'INR',
+        monthSpend: 25000,
+        monthOverMonthDelta: '+25%',
+        byCategory: [
+          { category: 'Travel', spent: 15000, share: '60%' },
+          { category: 'Meals', spent: 10000, share: '40%' },
+        ],
+      });
+    });
+
+    it('shows N/A for MoM delta when there is no prior data', async () => {
+      api.get.mockResolvedValue({
+        month: '2026-08',
+        currency: 'INR',
+        monthSpend: 5000,
+        previousMonthSpend: 0,
+        monthOverMonthDelta: null,
+        byCategory: [],
+        unconvertedCount: 0,
+        draftCount: 0,
+      });
+
+      const result = (await tools.getSpendSummary().execute(
+        {},
+        { signal: new AbortController().signal },
+      )) as Record<string, unknown>;
+
+      expect(result['monthOverMonthDelta']).toBe('N/A (no prior data)');
+    });
   });
 
   describe('generate_report (cancellation)', () => {
@@ -167,6 +251,7 @@ describe('ExpenseTools', () => {
         'search_expenses',
         'submit_expense',
         'get_budget_status',
+        'get_spend_summary',
         'generate_report',
       ]);
     });

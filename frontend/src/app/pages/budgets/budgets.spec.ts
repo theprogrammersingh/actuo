@@ -8,12 +8,16 @@ import { Session } from '../../core/session/session.js';
 import { Budgets } from './budgets.js';
 
 function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
-  const budgeted = overrides.budgeted ?? 10000;
+  const declaredBudget = overrides.declaredBudget ?? overrides.budgeted ?? 10000;
+  const carryforward = overrides.carryforward ?? 0;
+  const budgeted = overrides.budgeted ?? declaredBudget + carryforward;
   const spent = overrides.spent ?? 3000;
   return {
     categoryId: 'cat-1',
     categoryName: 'Travel',
     budgeted,
+    declaredBudget,
+    carryforward,
     spent,
     remaining: budgeted - spent,
     utilization: budgeted > 0 ? spent / budgeted : Number.POSITIVE_INFINITY,
@@ -109,9 +113,10 @@ describe('Budgets', () => {
       expect(travel?.querySelector('[data-money]')).not.toBeNull();
     });
 
-    it('says nothing about being over budget when nothing is', () => {
+    it('shows no "Over budget" danger badge when nothing is over', () => {
       expect(text()).not.toContain('Over budget');
-      expect(find('ui-badge')).toBeNull();
+      // Warning badges for "Nearing budget" may be present (e.g. Meals at 85%).
+      expect(find('ui-badge[tone="danger"]')).toBeNull();
     });
   });
 
@@ -348,7 +353,7 @@ describe('Budgets — setting one', () => {
     expect(options).not.toContain('All categories');
   });
 
-  it('says so, rather than showing an empty dropdown, when nothing is left to budget', async () => {
+  it('still shows the form for editing when every category has a budget', async () => {
     existingBudgets = [
       { id: 'b1', orgId: 'org-1', categoryId: null, amount: 1, period: 'monthly', rollover: false },
       { id: 'b2', orgId: 'org-1', categoryId: 'cat-travel', amount: 1, period: 'monthly', rollover: false },
@@ -356,8 +361,8 @@ describe('Budgets — setting one', () => {
     ];
     await create();
 
-    expect(host().querySelector('form')).toBeNull();
-    expect(text()).toContain('Every category already has a budget');
+    // Form is still present for editing existing budgets
+    expect(host().querySelector('form')).not.toBeNull();
   });
 
   it('explains a 409 in terms of what the API actually does', async () => {
@@ -385,21 +390,30 @@ describe('Budgets — setting one', () => {
       categoryId: null,
       amount: 10000,
       period: 'monthly',
+      rollover: false,
     });
     // The bars are server-computed, so they have to come back from it.
     const fetchesAfter = api.get.mock.calls.filter((c) => c[0] === '/budgets/status').length;
     expect(fetchesAfter).toBeGreaterThan(fetchesBefore);
   });
 
-  /** A control that changes no figure is a promise. Restore it with the behaviour. */
-  it('offers no rollover control while nothing honours the flag', async () => {
+  it('offers a rollover checkbox and sends the flag in the POST', async () => {
     await create();
 
-    const checkboxes = Array.from(
-      host().querySelectorAll('input[type="checkbox"]'),
-    );
-    expect(checkboxes).toHaveLength(0);
-    expect(host().textContent).not.toContain('Roll unspent budget');
+    const checkbox = host().querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(checkbox).not.toBeNull();
+    expect(host().textContent).toContain('Roll over unused');
+
+    // Check the box
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+
+    setAmount('5000');
+    submit();
+    await fixture.whenStable();
+
+    expect(api.post).toHaveBeenCalledWith('/budgets', expect.objectContaining({ rollover: true }));
   });
 
   it('sends the chosen category rather than the empty org-wide value', async () => {
@@ -436,7 +450,7 @@ describe('Budgets — setting one', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(text()).toContain('Only an owner or admin can set a budget.');
+    expect(text()).toContain('Only an owner or admin can manage budgets.');
   });
 
   /** A missing category list must not block the org-wide budget. */

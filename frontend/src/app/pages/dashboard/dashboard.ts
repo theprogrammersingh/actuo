@@ -28,6 +28,7 @@ import {
   totalForMonth,
   type PaceStatus,
 } from './spend-pace.js';
+import { isNearBudget, nearBudget } from '../budgets/budget-rollup.js';
 
 /** Days of history in the trend strip. Two weeks fits 14 legible bars on a phone. */
 const TREND_DAYS = 14;
@@ -147,6 +148,14 @@ const PACE_LABEL: Record<PaceStatus, string> = {
             [hint]="pendingHint()"
           />
         </div>
+
+        @if (nearBudgetCategories().length > 0) {
+          <p class="mt-3 text-xs text-status-warning" role="status">
+            {{ nearBudgetCategories().length }}
+            {{ nearBudgetCategories().length === 1 ? 'category is' : 'categories are' }}
+            nearing budget (≥80%).
+          </p>
+        }
 
         <!--
           Stated, not hidden. Every figure above counts base-currency rows only,
@@ -363,6 +372,9 @@ export class Dashboard {
   );
 
   protected readonly hasBudgets = computed(() => this.budgets().length > 0);
+
+  /** Categories at ≥80% utilization but not yet over budget. */
+  protected readonly nearBudgetCategories = computed(() => nearBudget(this.budgets()));
 
   private readonly budgeted = computed(() =>
     this.budgets().reduce((sum, budget) => sum + budget.budgeted, 0),

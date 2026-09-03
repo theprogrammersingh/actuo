@@ -34,6 +34,7 @@ const ADMIN_ID = '22222222-2222-4222-8222-222222222223';
 const MEMBER_ID = '22222222-2222-4222-8222-222222222222';
 const OUTSIDER_ID = '22222222-2222-4222-8222-2222222222ff';
 const EXPENSE_ID = '66666666-6666-4666-8666-000000000002';
+const BUDGET_ID = '77777777-7777-4777-8777-777777777777';
 
 /**
  * In-memory stand-ins for the repository interfaces.
@@ -207,7 +208,26 @@ describe('RBAC is enforced server-side (PRD §9 / CLAUDE.md rule 5)', () => {
       .overrideProvider(TOOL_CALL_LOG_REPOSITORY)
       .useValue({ append: notUsed, list: notUsed })
       .overrideProvider(BUDGET_REPOSITORY)
-      .useValue({ list: async () => [], create: notUsed })
+      .useValue({
+        list: async () => [],
+        findById: async () => ({
+          id: BUDGET_ID,
+          orgId: ORG_ID,
+          categoryId: null,
+          amount: 10_000,
+          period: 'monthly',
+          rollover: false,
+        }),
+        create: notUsed,
+        update: async (_orgId: string, _id: string, patch: any) => ({
+          id: BUDGET_ID,
+          orgId: ORG_ID,
+          categoryId: null,
+          amount: patch.amount ?? 10_000,
+          period: 'monthly',
+          rollover: patch.rollover ?? false,
+        }),
+      })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -422,6 +442,32 @@ describe('RBAC is enforced server-side (PRD §9 / CLAUDE.md rule 5)', () => {
         .set('Authorization', `Bearer ${tokenFor(MEMBER_ID)}`)
         .send({ amount: 1000 });
       expect(write.status).toBe(403);
+    });
+
+    it('owner can PATCH a budget', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(url(`/budgets/${BUDGET_ID}`))
+        .set('Authorization', `Bearer ${tokenFor(OWNER_ID)}`)
+        .send({ amount: 15_000 });
+      expect(res.status).toBe(200);
+      expect(res.body.amount).toBe(15_000);
+    });
+
+    it('admin can PATCH a budget', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(url(`/budgets/${BUDGET_ID}`))
+        .set('Authorization', `Bearer ${tokenFor(ADMIN_ID)}`)
+        .send({ rollover: true });
+      expect(res.status).toBe(200);
+      expect(res.body.rollover).toBe(true);
+    });
+
+    it('member cannot PATCH a budget', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(url(`/budgets/${BUDGET_ID}`))
+        .set('Authorization', `Bearer ${tokenFor(MEMBER_ID)}`)
+        .send({ amount: 15_000 });
+      expect(res.status).toBe(403);
     });
   });
 

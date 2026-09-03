@@ -119,6 +119,26 @@ export const GET_BUDGET_STATUS: ActuoToolContract = {
 };
 
 /**
+ * Spend breakdown by category (PRD §6.6 Analytics).
+ *
+ * Complements `get_budget_status`, which answers "am I on budget?". This
+ * answers "where is money going?" with per-category totals and shares.
+ */
+export const GET_SPEND_SUMMARY: ActuoToolContract = {
+  name: 'get_spend_summary',
+  title: 'Get spend summary',
+  description:
+    'Returns spend totals and a per-category breakdown for the current month, with month-over-month delta. Read-only.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: true },
+  requiresConfirmation: false,
+};
+
+/**
  * Long-running on purpose — this is the tool that demonstrates AbortSignal
  * cancellation (PRD §7). Its execute() must poll `options.signal`.
  */
@@ -181,6 +201,7 @@ export const ALWAYS_ON_TOOLS: readonly ActuoToolContract[] = [
   SEARCH_EXPENSES,
   SUBMIT_EXPENSE,
   GET_BUDGET_STATUS,
+  GET_SPEND_SUMMARY,
   GENERATE_REPORT,
 ] as const;
 

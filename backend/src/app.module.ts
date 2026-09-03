@@ -17,6 +17,7 @@ import { BudgetsModule } from './budgets/budgets.module.js';
 import { ToolCallsModule } from './tool-calls/tool-calls.module.js';
 import { OrgsModule } from './orgs/orgs.module.js';
 import { ReportsModule } from './reports/reports.module.js';
+import { AnalyticsModule } from './analytics/analytics.module.js';
 
 /**
  * Absolute path to `backend/.env`.
@@ -63,6 +64,7 @@ const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
     AuditModule,
     OrgsModule,
     ReportsModule,
+    AnalyticsModule,
   ],
   controllers: [AppController, HealthController, ConfigController],
   providers: [

@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '../config/env.service.js';
 import type {
@@ -21,7 +22,8 @@ const DINING = 'cat-dining';
 
 function createService(options: {
   spend?: CategorySpendRow[];
-  budgets?: Array<{ categoryId: string | null; amount: number }>;
+  prevSpend?: CategorySpendRow[];
+  budgets?: Array<{ categoryId: string | null; amount: number; rollover?: boolean }>;
 }) {
   const budgets = {
     list: async () =>
@@ -31,13 +33,19 @@ function createService(options: {
         categoryId: b.categoryId,
         amount: b.amount,
         period: 'monthly' as const,
-        rollover: false,
+        rollover: b.rollover ?? false,
         createdAt: '2026-08-01T00:00:00.000Z',
       })),
   } as unknown as BudgetRepository;
 
+  // Track which window is being queried to return current vs previous spend
+  let callCount = 0;
   const expenses = {
-    sumByCategory: async () => options.spend ?? [],
+    sumByCategory: async () => {
+      callCount++;
+      // First call is current window, second is previous (if rollover is enabled)
+      return callCount === 1 ? (options.spend ?? []) : (options.prevSpend ?? []);
+    },
   } as unknown as ExpenseRepository;
 
   const orgs = {
@@ -106,5 +114,112 @@ describe('BudgetsService.status', () => {
     const [travel] = await service.status(USER, {});
     expect(travel.spent).toBe(0);
     expect(travel.unconvertedCount).toBe(0);
+  });
+});
+
+describe('BudgetsService.status — rollover (PRD §6.3)', () => {
+  it('carries unspent budget forward when rollover is true', async () => {
+    const service = createService({
+      budgets: [{ categoryId: TRAVEL, amount: 10_000, rollover: true }],
+      spend: [{ categoryId: TRAVEL, total: 3_000, unconverted: 0 }],
+      // Previous month: budget was 10,000, only spent 6,000 → carry 4,000
+      prevSpend: [{ categoryId: TRAVEL, total: 6_000, unconverted: 0 }],
+    });
+
+    const [travel] = await service.status(USER, {});
+
+    expect(travel.declaredBudget).toBe(10_000);
+    expect(travel.carryforward).toBe(4_000);
+    expect(travel.budgeted).toBe(14_000); // 10,000 + 4,000 carry
+    expect(travel.remaining).toBe(11_000); // 14,000 - 3,000 spent
+  });
+
+  it('does not carry forward when rollover is false', async () => {
+    const service = createService({
+      budgets: [{ categoryId: TRAVEL, amount: 10_000, rollover: false }],
+      spend: [{ categoryId: TRAVEL, total: 3_000, unconverted: 0 }],
+      prevSpend: [{ categoryId: TRAVEL, total: 6_000, unconverted: 0 }],
+    });
+
+    const [travel] = await service.status(USER, {});
+
+    expect(travel.declaredBudget).toBe(10_000);
+    expect(travel.carryforward).toBe(0);
+    expect(travel.budgeted).toBe(10_000);
+  });
+
+  it('never carries overspend as debt — max(0, unspent)', async () => {
+    const service = createService({
+      budgets: [{ categoryId: TRAVEL, amount: 10_000, rollover: true }],
+      spend: [{ categoryId: TRAVEL, total: 2_000, unconverted: 0 }],
+      // Previous month was over budget: 12,000 spent against 10,000 budget
+      prevSpend: [{ categoryId: TRAVEL, total: 12_000, unconverted: 0 }],
+    });
+
+    const [travel] = await service.status(USER, {});
+
+    // Overspend does not reduce this month's budget
+    expect(travel.carryforward).toBe(0);
+    expect(travel.budgeted).toBe(10_000);
+  });
+
+  it('carries zero when there is no previous data', async () => {
+    const service = createService({
+      budgets: [{ categoryId: TRAVEL, amount: 10_000, rollover: true }],
+      spend: [{ categoryId: TRAVEL, total: 1_000, unconverted: 0 }],
+      prevSpend: [], // No prior spend
+    });
+
+    const [travel] = await service.status(USER, {});
+
+    // No prior spend = full budget is unspent, so carry = 10,000
+    expect(travel.carryforward).toBe(10_000);
+    expect(travel.budgeted).toBe(20_000);
+  });
+});
+
+describe('BudgetsService.update', () => {
+  const BUDGET_ID = 'budget-123';
+
+  function createUpdateService(options: { existingBudget?: object | null }) {
+    const budgetData = options.existingBudget ?? {
+      id: BUDGET_ID,
+      orgId: USER.orgId,
+      categoryId: TRAVEL,
+      amount: 10_000,
+      period: 'monthly' as const,
+      rollover: false,
+    };
+
+    const budgets = {
+      list: async () => [],
+      findById: async () => (options.existingBudget === null ? null : budgetData),
+      update: async (_orgId: string, _id: string, patch: any) => ({
+        ...budgetData,
+        ...patch,
+      }),
+    } as unknown as BudgetRepository;
+
+    const expenses = { sumByCategory: async () => [] } as unknown as ExpenseRepository;
+    const orgs = {
+      listCategories: async () => [],
+      findOrg: async () => ({ id: USER.orgId, name: 'Acme', baseCurrency: 'INR' }),
+    } as unknown as OrgRepository;
+    const env = { baseCurrency: 'INR' } as unknown as EnvService;
+
+    return new BudgetsService(env, budgets, expenses, orgs);
+  }
+
+  it('calls repository and returns updated budget', async () => {
+    const service = createUpdateService({});
+    const result = await service.update(USER, BUDGET_ID, { amount: 15_000 });
+    expect(result.amount).toBe(15_000);
+  });
+
+  it('throws NotFoundException when budget does not exist', async () => {
+    const service = createUpdateService({ existingBudget: null });
+    await expect(service.update(USER, BUDGET_ID, { amount: 15_000 })).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

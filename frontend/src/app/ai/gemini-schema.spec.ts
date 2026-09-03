@@ -282,12 +282,18 @@ describe('toGeminiSchema', () => {
         'search_expenses',
         'submit_expense',
         'get_budget_status',
+        'get_spend_summary',
         'generate_report',
         'approve_expense',
       ]);
       for (const declaration of declarations) {
         expect(declaration.description.length).toBeGreaterThan(0);
-        expect(declaration.parameters?.type).toBe('OBJECT');
+        // Tools with inputs have parameters; `get_spend_summary` has none.
+        if (declaration.name === 'get_spend_summary') {
+          expect(declaration.parameters).toBeUndefined();
+        } else {
+          expect(declaration.parameters?.type).toBe('OBJECT');
+        }
       }
     });
 

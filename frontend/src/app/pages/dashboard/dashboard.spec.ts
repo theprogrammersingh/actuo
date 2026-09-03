@@ -40,6 +40,8 @@ const BUDGETS: BudgetStatus[] = [
     categoryId: 'cat-1',
     categoryName: 'Travel',
     budgeted: 10000,
+    declaredBudget: 10000,
+    carryforward: 0,
     spent: 3000,
     remaining: 7000,
     utilization: 0.3,
