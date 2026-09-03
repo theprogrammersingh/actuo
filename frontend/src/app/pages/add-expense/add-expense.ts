@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { CURRENCIES, type Expense } from '@actuo/shared';
+import { ChangeDetectionStrategy, Component, PLATFORM_ID, inject, signal } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+import { CURRENCIES, type Category, type Expense } from '@actuo/shared';
 import { ApiClient } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
 import { ToolCallAudit } from '../../webmcp/tool-call-audit.js';
@@ -87,6 +88,21 @@ import { ToolCallAudit } from '../../webmcp/tool-call-audit.js';
         </div>
 
         <div>
+          <label class="mb-1 block text-sm font-medium" for="categoryId">Category</label>
+          <select
+            id="categoryId"
+            name="categoryId"
+            toolparamdescription="Category UUID. Call fetch_categories first to see valid options."
+            class="min-h-11 w-full rounded-md border border-line bg-card px-3 text-body"
+          >
+            <option value="">None</option>
+            @for (cat of categories(); track cat.id) {
+              <option [value]="cat.id">{{ cat.name }}</option>
+            }
+          </select>
+        </div>
+
+        <div>
           <label class="mb-1 block text-sm font-medium" for="expenseDate">Date</label>
           <input
             id="expenseDate"
@@ -136,12 +152,28 @@ export class AddExpense {
   private readonly api = inject(ApiClient);
   private readonly session = inject(Session);
   private readonly audit = inject(ToolCallAudit);
+  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 
   protected readonly currencies = CURRENCIES;
   protected readonly today = new Date().toISOString().slice(0, 10);
   protected readonly saving = signal(false);
   protected readonly message = signal<string | null>(null);
   protected readonly failed = signal(false);
+  protected readonly categories = signal<Category[]>([]);
+
+  constructor() {
+    if (this.isBrowser) void this.loadCategories();
+  }
+
+  private async loadCategories(): Promise<void> {
+    try {
+      this.categories.set(
+        await this.api.get<Category[]>('/orgs/current/categories'),
+      );
+    } catch {
+      // The form still works without categories — the field stays empty.
+    }
+  }
 
   protected onSubmit(event: Event): void {
     event.preventDefault();
@@ -151,6 +183,7 @@ export class AddExpense {
     const payload = {
       amount: Number(data.get('amount')),
       currency: String(data.get('currency') ?? 'INR'),
+      categoryId: (data.get('categoryId') as string) || null,
       merchant: (data.get('merchant') as string) || null,
       note: (data.get('note') as string) || null,
       expenseDate: String(data.get('expenseDate') ?? this.today),

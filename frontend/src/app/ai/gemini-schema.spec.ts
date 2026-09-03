@@ -284,12 +284,13 @@ describe('toGeminiSchema', () => {
         'get_budget_status',
         'get_spend_summary',
         'generate_report',
+        'fetch_categories',
         'approve_expense',
       ]);
       for (const declaration of declarations) {
         expect(declaration.description.length).toBeGreaterThan(0);
-        // Tools with inputs have parameters; `get_spend_summary` has none.
-        if (declaration.name === 'get_spend_summary') {
+        // Tools with inputs have parameters; `get_spend_summary` and `fetch_categories` have none.
+        if (declaration.name === 'get_spend_summary' || declaration.name === 'fetch_categories') {
           expect(declaration.parameters).toBeUndefined();
         } else {
           expect(declaration.parameters?.type).toBe('OBJECT');

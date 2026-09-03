@@ -84,14 +84,14 @@ export const SUBMIT_EXPENSE: ActuoToolContract = {
   name: 'submit_expense',
   title: 'Submit an expense',
   description:
-    'Create an expense and submit it for approval. Use when the user describes a purchase they want recorded.',
+    'Create an expense and submit it for approval. Use when the user describes a purchase they want recorded. If the user mentions a category, call fetch_categories first to get the categoryId.',
   inputSchema: {
     type: 'object',
     properties: {
       amount: { type: 'number', exclusiveMinimum: 0, description: 'Amount in the given currency.' },
       currency: { type: 'string', enum: [...CURRENCIES], default: 'INR' },
       merchant: { type: 'string', description: 'Where the money was spent.' },
-      category: { type: 'string', description: 'Category name, e.g. "Travel" or "Dining".' },
+      categoryId: { type: 'string', description: 'Category UUID from fetch_categories.' },
       note: { type: 'string' },
       expenseDate: { type: 'string', format: 'date', description: 'YYYY-MM-DD. Defaults to today.' },
     },
@@ -164,6 +164,24 @@ export const GENERATE_REPORT: ActuoToolContract = {
 };
 
 /**
+ * Read-only lookup so the LLM can resolve human-friendly category names to
+ * the UUIDs that `submit_expense` and `search_expenses` need.
+ */
+export const FETCH_CATEGORIES: ActuoToolContract = {
+  name: 'fetch_categories',
+  title: 'List expense categories',
+  description:
+    'Returns the organization\'s expense categories with their IDs. Call this before submit_expense when the user mentions a category, so you can pass the correct categoryId.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: true },
+  requiresConfirmation: false,
+};
+
+/**
  * State-gated (PRD §7): only registered when the signed-in user is an
  * admin/owner AND at least one expense is awaiting approval. Registration and
  * unregistration fire `toolchange`.
@@ -203,6 +221,7 @@ export const ALWAYS_ON_TOOLS: readonly ActuoToolContract[] = [
   GET_BUDGET_STATUS,
   GET_SPEND_SUMMARY,
   GENERATE_REPORT,
+  FETCH_CATEGORIES,
 ] as const;
 
 export const ALL_TOOL_CONTRACTS: readonly ActuoToolContract[] = [

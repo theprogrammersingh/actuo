@@ -26,9 +26,10 @@ describe('ToolSession (state-gated approve_expense)', () => {
     registry = TestBed.inject(ToolRegistry);
   });
 
-  it('publishes the five always-on tools on start', async () => {
+  it('publishes the always-on tools on start', async () => {
     await session.start();
     expect([...registry.registeredNames()].sort()).toEqual([
+      'fetch_categories',
       'generate_report',
       'get_budget_status',
       'get_spend_summary',
