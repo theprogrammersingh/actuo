@@ -341,16 +341,24 @@ Dockerfile declares `ARG PUBLIC_ORIGIN` to receive it. Changing it needs a
 it prompts, and then leaves `@angular/cli` and `typescript` in place anyway. A
 larger image beats a step that silently half-works.
 
-**`NG_ALLOWED_HOSTS` is load-bearing, and it fails silently.** Angular 21 checks
-the `Host` header against an allowlist (SSRF protection). Off the list it does not
-error — it falls back to **client-side rendering**, quietly discarding the SSR and
-structured-data work in PRD §8.5. The env var *replaces* the build-time list in
-`angular.json` (`getAllowedHostsFromEnv() ?? options.allowedHosts`), so a deploy
-must list every hostname it answers on. The port is stripped before matching, and
-`*.example.com` wildcards match by suffix (`isHostAllowed` turns `*.x` into
-`hostname.endsWith('.x')`), so one wildcard covers a multi-label host. Verify
-with: the HTML for `/` contains `ng-server-context`. `angular.json` carries
-`localhost` so `node server.mjs` renders locally.
+**Two different things switch SSR off, and they look nothing alike.**
+
+**`NG_ALLOWED_HOSTS` — a hard 400.** Angular checks `Host` and
+`X-Forwarded-Host` against an allowlist (SSRF). With one configured a miss is
+**400 `text/plain`**; only an *empty* list falls back to CSR. The env var is a
+comma list and is **unioned with** `angular.json`'s `security.allowedHosts`, not
+a replacement. `*.example.com` matches by suffix. Never set it to `*`.
+
+**Untrusted proxy headers — this is the silent one.** Angular deopts to CSR on
+any `x-forwarded-*` header it was not told to trust, returning a normal 200 that
+was never server-rendered. Its default covers only host and proto; Render also
+sends `x-forwarded-for`, so the deploy rendered client-side for every visitor
+while every test passed. `frontend/src/server.ts` trusts the full set, reading
+`NG_TRUST_PROXY_HEADERS` first so a deploy can narrow it.
+
+Verify with `pnpm run verify:deploy <url>`, which tells the two apart. Reproduce
+the second locally:
+`curl -s -H 'X-Forwarded-For: 203.0.113.9' localhost:8080/ | grep ng-server-context`
 
 **`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one** — a `Dockerfile`
 `ARG`. On Render it is declared as a normal env var only because Render turns
@@ -361,22 +369,17 @@ the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
 file, and `scripts/stamp-seo.mjs` replaces it across **the whole
 `dist/frontend` tree** as the last step of `pnpm run build`.
 
-**It must not narrow to `browser/` again.** It did, and the deployed site served
-a literal `__PUBLIC_ORIGIN__` in its `canonical` and `og:image`: Angular keeps
-its own copies of the page HTML under `server/` — `index.server.html` and the
-`assets-chunks/*.mjs` templates, `index_csr_html.mjs` among them — and those are
-what the SSR handler serves. `sitemap.xml` and `robots.txt` looked right the
-whole time because they come from `browser/`, which is what made it hard to see.
-`.mjs` is in the stampable extension set for exactly this reason.
+**It must not narrow to `browser/` again.** It did, and the deploy served a
+literal `__PUBLIC_ORIGIN__`: Angular keeps its own page HTML under `server/`, and
+that is what the SSR handler serves. `sitemap.xml` looked right throughout, which
+is what hid it. `.mjs` is stampable for that reason.
 
 Unset, `PUBLIC_ORIGIN` substitutes `''` and everything stays root-relative and
 valid. It must carry the scheme: the value is substituted verbatim, so a bare
 hostname yields a `<loc>` that is not a URL.
 
-**`pnpm run verify:deploy <url>`** checks the deployed result of all of this —
-`ng-server-context` present, no sentinel surviving, and the converter configured
-on another origin. Local green does not mean deployed correct: SSR fell back to
-CSR in production while every test passed and the page looked fine.
+**`pnpm run verify:deploy <url>`** checks the deployed result. Local green does
+not mean deployed correct.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and

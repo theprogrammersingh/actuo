@@ -125,7 +125,7 @@ alive. Always verify after — `pkill`'s exit status is not proof.
 | Per-category budgets | 1 | ✅ | `budgets.service.ts:status` unions budgeted and spent categories |
 | Per-team budgets | 2 | ⬜ | No team entity exists |
 | Threshold alerts (80%) | 1 | ⬜ | Utilization is computed and shown; no threshold, no alert, no notification |
-| Rollover vs reset | 1 | 🟡 | `rollover` column is persisted but **read by nothing** — `status()` always computes a fresh calendar month, so the flag has no effect |
+| Rollover vs reset | 1 | ⬜ | Column and DTO field exist, read by nothing — `status()` always computes a fresh calendar month. The Budgets form **no longer offers the checkbox**; `budgets.spec.ts` guards against it returning without the behaviour |
 | Budget creation UI | 1 | ✅ | A form on the Budgets page for owner/admin. `POST /budgets` inserts and a unique index makes a repeat a 409, so only categories without a budget are offered — **changing** an existing budget is still unsupported (no PATCH route) |
 
 **Verify:** with a category over budget, confirm the bar turns danger-toned and
@@ -190,7 +190,7 @@ not a naive sum, and that it says how many rows it left out.
 | Month-over-month deltas | 1 | 🟡 | Computed for the pace benchmark; no delta tile |
 | Team vs individual | 2 | ⬜ | — |
 | CSV export | 0 | ✅ | Chunked, cancellable, complete across pages |
-| **PDF export** | 2 | 🟡 | `format: 'pdf'` is **accepted and silently returns CSV**. Either implement it or reject the value |
+| **PDF export** | 2 | ⬜ | `pdf` is now **rejected** rather than silently answered with CSV. `shared/src/report-format-contract.spec.ts` pins the tool schema and the backend DTO to the same list |
 | `/api/analytics/*` | 1 | ⬜ | No controller; the dashboard derives everything client-side |
 
 ## §6.7 Notifications — ⬜
@@ -267,7 +267,7 @@ and the offline banner appearing and clearing on the network events.
 | Structured data | ✅ | Real `application/ld+json` `SoftwareApplication` |
 | llms.txt | ✅ | Accurate tool inventory and permission model |
 | OG / Twitter | ✅ | 1200×630 `og.png` generated from the brand tokens, plus `og:url`, `og:image:alt`, `twitter:image` and a canonical link |
-| SSR on public pages | 🟡 ⚠️ | `app.routes.server.ts` prerenders `**` — including authenticated routes, which land on the app shell and hydrate client-side (correct for a gated view, accidental rather than chosen). **Broken on the deployed site as of 2026-09-03:** `/` carries no `ng-server-context`, so Angular is falling back to CSR there and discarding the SSR entirely. It works locally, which is exactly how it went unnoticed — the same silent failure as 2026-08-29. `NG_ALLOWED_HOSTS` must be set on the *service*, not only in `render.yaml` and the Dockerfile. `pnpm run verify:deploy <url>` now checks it |
+| SSR on public pages | 🟡 | `app.routes.server.ts` prerenders `**`, including authenticated routes, which hydrate client-side (correct for a gated view, accidental rather than chosen). **Was broken on the deploy until 2026-09-03, and not for the documented reason:** Angular downgrades to CSR on any untrusted `x-forwarded-*` header, and Render sends `x-forwarded-for`; a host-allowlist miss is a 400 instead. `frontend/src/server.ts` now trusts the full proxy set |
 | noindex on gated views | ✅ | `data.robots` per route, applied by `SeoService` on every navigation; a route that declares nothing defaults to `noindex`. Verified live: the tag flips going from `/` to `/expenses` |
 
 ## §9 Non-functional

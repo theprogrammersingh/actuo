@@ -1,25 +1,13 @@
 /**
  * Smoke-checks a running deploy.
  *
- * Every check here exists because the thing it checks **failed silently in
- * production** and nobody noticed until someone opened the site by hand:
+ * Every check here failed silently in production at least once: SSR quietly
+ * downgraded to client-side rendering, and `__PUBLIC_ORIGIN__` shipped
+ * unstamped. Neither is visible to a unit test or to a glance at the page.
  *
- *  - SSR fell back to client-side rendering. Angular does not error when the
- *    `Host` header is off its allowlist — it quietly renders on the client and
- *    throws away the SSR and structured-data work. The page still looks fine.
- *  - `__PUBLIC_ORIGIN__` shipped literally in `canonical` and `og:image`,
- *    because the SEO stamp only walked `browser/` while the SSR handler serves
- *    HTML from `server/`. A crawler read a malformed URL, which is worse than a
- *    relative one. `sitemap.xml` looked correct throughout, which is what made
- *    it hard to see.
- *
- * Neither is visible to a unit test, and both are invisible to a casual look at
- * the page. So they are checked here, against the real origin, over the network.
- *
- *   node scripts/verify-deploy.mjs https://actuo.example
  *   pnpm run verify:deploy https://actuo.example
  *
- * Exits non-zero on the first failure, naming what to change.
+ * Exits non-zero on failure, naming what to change.
  */
 
 const SENTINEL = '__PUBLIC_ORIGIN__';
@@ -31,7 +19,6 @@ if (!base) {
   process.exit(2);
 }
 
-/** A deploy that is merely asleep should read as slow, not as broken. */
 async function get(path) {
   const url = `${base}${path}`;
   const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -62,15 +49,25 @@ let home = '';
 try {
   const { status, body } = await get('/');
   home = body;
-  if (status !== 200) {
+  /*
+   * 400            -> host allowlist  -> NG_ALLOWED_HOSTS
+   * 200 without it -> proxy headers   -> trustProxyHeaders
+   */
+  if (status === 400) {
+    fail(
+      '/ server-rendered',
+      `status 400 — the host allowlist rejected "${new URL(base).hostname}"`,
+      'Add this hostname to NG_ALLOWED_HOSTS on the service (a comma-separated list; "*.example.com" matches by suffix). It is checked at runtime, so a restart is enough.',
+    );
+  } else if (status !== 200) {
     fail('/', `status ${status}`, 'The Angular handler is not answering.');
   } else if (body.includes('ng-server-context')) {
     pass('/', 'server-rendered (ng-server-context present)');
   } else {
     fail(
       '/ server-rendered',
-      'no ng-server-context — Angular fell back to client-side rendering',
-      'Set NG_ALLOWED_HOSTS on the SERVICE (runtime, not just build) to cover this hostname, e.g. "*.onrender.com". Angular does not error when the Host header is off the list; it silently renders on the client.',
+      'no ng-server-context — a 200 that was rendered on the client',
+      'The proxy is sending an x-forwarded-* header Angular does not trust, so it downgraded to CSR. frontend/src/server.ts passes the full set to AngularNodeAppEngine, so if this fails the deploy predates that fix — redeploy — or NG_TRUST_PROXY_HEADERS is set on the service and is too narrow. The service logs name the exact header: "Received \"x-...\" header but trustProxyHeaders was not set up to allow it".',
     );
   }
 } catch (error) {

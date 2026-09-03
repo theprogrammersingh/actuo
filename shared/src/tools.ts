@@ -132,7 +132,9 @@ export const GENERATE_REPORT: ActuoToolContract = {
     properties: {
       from: { type: 'string', format: 'date' },
       to: { type: 'string', format: 'date' },
-      format: { type: 'string', enum: ['csv', 'pdf'], default: 'csv' },
+      // CSV only. `pdf` was listed here and silently answered with CSV — an
+      // agent offered it will pick it. Add it back with a renderer, not before.
+      format: { type: 'string', enum: ['csv'], default: 'csv' },
     },
     required: ['from', 'to'],
     additionalProperties: false,

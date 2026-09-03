@@ -9,8 +9,37 @@ import { join } from 'node:path';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
+/**
+ * Trusted `x-forwarded-*` headers, or SSR silently downgrades.
+ *
+ * Angular deopts to client-side rendering on any untrusted `x-forwarded-*`
+ * header — a normal-looking 200 that was never server-rendered. Its default
+ * covers only host and proto; Render also sends `x-forwarded-for`. (A host
+ * *allowlist* miss is a 400 instead — different failure.)
+ *
+ * Safe to trust: only proto and host build the request URL, and host is still
+ * checked against `allowedHosts`. Keep that list restrictive.
+ */
+const PROXY_HEADERS = [
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-forwarded-for',
+  'x-forwarded-port',
+  'x-forwarded-prefix',
+];
+
+/**
+ * Read here, not left to Angular: `AngularNodeAppEngine` resolves
+ * `options?.trustProxyHeaders ?? getTrustProxyHeadersFromEnv()`, so passing the
+ * option at all would disable the env var.
+ */
+const trustProxyHeaders =
+  process.env['NG_TRUST_PROXY_HEADERS']?.split(',')
+    .map((header) => header.trim().toLowerCase())
+    .filter((header) => header.length > 0) ?? PROXY_HEADERS;
+
 const app = express();
-const angularApp = new AngularNodeAppEngine();
+const angularApp = new AngularNodeAppEngine({ trustProxyHeaders });
 
 /**
  * **Do not add `/api` routes here.**

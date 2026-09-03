@@ -385,11 +385,21 @@ describe('Budgets — setting one', () => {
       categoryId: null,
       amount: 10000,
       period: 'monthly',
-      rollover: false,
     });
     // The bars are server-computed, so they have to come back from it.
     const fetchesAfter = api.get.mock.calls.filter((c) => c[0] === '/budgets/status').length;
     expect(fetchesAfter).toBeGreaterThan(fetchesBefore);
+  });
+
+  /** A control that changes no figure is a promise. Restore it with the behaviour. */
+  it('offers no rollover control while nothing honours the flag', async () => {
+    await create();
+
+    const checkboxes = Array.from(
+      host().querySelectorAll('input[type="checkbox"]'),
+    );
+    expect(checkboxes).toHaveLength(0);
+    expect(host().textContent).not.toContain('Roll unspent budget');
   });
 
   it('sends the chosen category rather than the empty org-wide value', async () => {
