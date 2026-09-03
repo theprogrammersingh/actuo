@@ -93,6 +93,7 @@ pnpm run dev           # shared, then backend (:3000) + frontend (:4200)
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
+pnpm run backfill:fx   # lock ECB rates onto rows without one; dry run unless --apply
 ```
 
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
@@ -415,7 +416,8 @@ Getting them confused is how the UI briefly offered an Approve button that alway
 ## Module map
 
 **backend/** — `auth/` (argon2id + JWT, rotating refresh, guards), `expenses/`
-(CRUD, search, the status state machine), `budgets/`, `reports/` (polled job for
+(CRUD, search, the status state machine), `fx/` (ECB rates, the daily cache,
+and the rate lock — no controller, deliberately), `budgets/`, `reports/` (polled job for
 the cancellation demo), `tool-calls/` (audit log), `orgs/`, `config/`
 (`GET /api/config` serves the Gemini model list so it is editable without a
 rebuild), `supabase/` (client + repository seam), `common/` (rate limiting).
@@ -503,11 +505,7 @@ finished in both the source and the test count.
 
 ## Money: never add two currencies
 
-There is no FX pass. `expenses.service.ts` writes `converted_amount` **only**
-when the expense is already in the org's base currency, so it is `null` for
-every foreign row — and the seed data has INR, USD and EUR.
-
-So a row counts toward a total only when it has a base-currency value, and the
+A row counts toward a total only when it has a base-currency value, and the
 ones that do not are **counted and stated**, never dropped and never added:
 
 - Frontend: `core/expense/amount.ts` — `isConverted()`, `sumSpend()` (returns
@@ -520,15 +518,58 @@ ones that do not are **counted and stated**, never dropped and never added:
 
 The earlier code fell back to the raw `amount`, on the reasoning that a slightly
 wrong number beat a bar reading zero. It was not slightly wrong: a $200 charge
-was counted as ₹200. When a real FX pass starts filling `converted_amount`,
-those rows re-enter every total with no code change.
+was counted as ₹200. That rule is what let the FX pass land without touching a
+line of `amount.ts`: foreign rows re-entered every total the moment
+`converted_amount` started being filled.
+
+## FX: the rate is locked at write time, from the ECB
+
+`backend/src/fx/` converts a foreign expense **once**, at its own
+`expense_date`, and records what it used. `ExpensesService.create` and
+`.update` write three fields together — `converted_amount`, `fx_rate`,
+`fx_rate_date` — because a converted amount with no rate cannot be defended and
+a rate with no date cannot be reproduced.
+
+**Rates come from the ECB via `api.frankfurter.dev`**, which is deliberately the
+same publisher the embedded converter shows: Cambiaro calls it from the browser,
+so the advisory widget and the ledger agree without the ledger depending on the
+widget. Cambiaro itself is **not** a rate source and cannot be one — it is a
+static client-side app with no HTTP API (`/api/*` all 404), so its only
+programmatic surface is `document.modelContext`, which exists inside a browser
+page. Reading a figure out of the frame remains forbidden for the reasons below.
+
+Four things that look like details and are not:
+
+- **`fx_rate_date` is not `expense_date`.** The ECB publishes once per working
+  day, so a Saturday expense locks Friday's rate. Both dates are stored, and
+  the UI prints the rate's own date — claiming the expense's date would name a
+  rate nobody published. Real seed data exercises this: AWS on 2026-08-29.
+- **`FxService.rateOn` never throws.** A missing rate returns `null`, the three
+  fields are written as null, and the row is excluded and counted — the state
+  the rules above already handle. A currency API being down must not stop
+  someone filing an expense.
+- **`fx_rates` is keyed on the date *asked for*, not the date the rate is
+  from.** Keyed the other way, every weekend lookup would miss the cache
+  forever. The one entry that can go stale is today's while it still stands in
+  for an earlier day, before the ~16:00 CET publication.
+- **An edit re-locks, and `expenseDate` is the easy one to miss.** Amount,
+  currency *and* date each invalidate the lock; all three fields move together,
+  including when the new lock fails.
+
+`backend/scripts/backfill-fx.mjs` (`pnpm run backfill:fx`, dry run unless
+`--apply`) locks rates onto rows that have none, and with `--restate` onto rows
+whose `converted_amount` has no rate behind it — which the demo seed's foreign
+rows were, at hand-written rates nobody published. It lives under `backend/`
+because pnpm hoists nothing: a root script cannot resolve `@nestjs/core`.
 
 **The embedded converter does not change this, and must not.** `converter/`
 frames a separate converter app on four surfaces (`/convert`, `/agent`, the
 dashboard's excluded-rows notice, and expense rows in another currency). It is
-advisory: a rate a person reads off another site is not the historical rate
-locked at entry, so nothing it shows may reach `converted_amount`, `sumSpend()`,
-`sumByCategory()`, or the `excludedNotice()` copy.
+advisory: a rate a person reads off another site *today* is not the historical
+rate locked at entry, so nothing it shows may reach `converted_amount`,
+`sumSpend()`, `sumByCategory()`, or the `excludedNotice()` copy. The FX pass
+makes this sharper, not softer — there is now a real locked rate for the frame's
+number to contradict.
 
 That is enforced structurally rather than by good intentions:
 `CurrencyConverter` has **no `output()`, no `postMessage` listener, and never

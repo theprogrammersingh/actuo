@@ -37,6 +37,20 @@ export function formatMoney(amount: number, currency: string, locale = DEFAULT_L
 }
 
 /**
+ * An FX rate, as a plain number with no currency symbol.
+ *
+ * Deliberately not `formatMoney`: that caps at whole units, which is right for
+ * an expense list and useless for a rate — 95.27 would print as "₹95", and the
+ * reverse direction (1 INR = 0.0105 USD) as "₹0". A rate is also not an amount
+ * of money in either currency, so a symbol on it would be wrong as well as
+ * imprecise; the caller names both currencies around it instead.
+ */
+export function formatRate(rate: number, locale = DEFAULT_LOCALE): string {
+  if (!Number.isFinite(rate)) return '—';
+  return new Intl.NumberFormat(locale, { maximumSignificantDigits: 6 }).format(rate);
+}
+
+/**
  * `2026-08-27` → `27 Aug`. Expense dates are date-only strings, so they are
  * split by hand: `new Date('2026-08-27')` parses as UTC midnight and renders as
  * the 26th for anyone west of Greenwich.

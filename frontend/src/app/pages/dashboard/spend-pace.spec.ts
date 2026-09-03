@@ -24,6 +24,8 @@ function expense(overrides: Partial<Expense> = {}): Expense {
     amount: 100,
     currency: 'INR',
     convertedAmount: null,
+    fxRate: null,
+    fxRateDate: null,
     baseCurrency: 'INR',
     merchant: 'Barista',
     note: null,

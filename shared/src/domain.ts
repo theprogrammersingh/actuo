@@ -169,6 +169,21 @@ export interface Expense {
   currency: string;
   convertedAmount: number | null;
   baseCurrency: string;
+  /**
+   * The rate locked at write time — 1 unit of `currency` in `baseCurrency` —
+   * and the day that rate is from (PRD §6.5).
+   *
+   * `fxRateDate` is not always `expenseDate`. The ECB publishes once per
+   * working day, so an expense filed on a Sunday locks Friday's rate, and
+   * saying which day it came from is the difference between an auditable
+   * figure and a number nobody can defend.
+   *
+   * Both are null together, and that is the honest "no rate could be locked"
+   * state: `convertedAmount` is null too, and the row is excluded from totals
+   * and counted rather than added at face value.
+   */
+  fxRate: number | null;
+  fxRateDate: string | null;
   merchant: string | null;
   note: string | null;
   status: ExpenseStatus;

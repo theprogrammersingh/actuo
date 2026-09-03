@@ -19,6 +19,8 @@ function expense(overrides: Partial<Expense> = {}): Expense {
     amount: 100,
     currency: 'INR',
     convertedAmount: null,
+    fxRate: null,
+    fxRateDate: null,
     baseCurrency: 'INR',
     merchant: 'Barista',
     note: null,
@@ -144,6 +146,38 @@ describe('expenseAmount', () => {
 
   it('never returns NaN', () => {
     expect(expenseAmount(expense({ amount: Number.NaN, convertedAmount: null }))).toBe(0);
+  });
+});
+
+describe('a row the FX pass has locked a rate onto', () => {
+  // The point of the whole design: nothing in this file changed to make these
+  // pass. A foreign row re-enters every total the moment `convertedAmount` is
+  // filled, which is what `sumSpend()` was written to allow.
+  const locked = expense({
+    amount: 20,
+    currency: 'USD',
+    convertedAmount: 1908.6,
+    fxRate: 95.43,
+    fxRateDate: '2026-08-14',
+    baseCurrency: 'INR',
+  });
+
+  it('counts as converted', () => {
+    expect(isConverted(locked)).toBe(true);
+  });
+
+  it('is labelled in the base currency, not the one it was filed in', () => {
+    expect(expenseCurrency(locked)).toBe('INR');
+    expect(expenseAmount(locked)).toBe(1908.6);
+  });
+
+  it('is added to the total rather than excluded from it', () => {
+    expect(sumSpend([locked])).toEqual({ total: 1908.6, excluded: 0 });
+  });
+
+  it('is still excluded when the rate could not be locked', () => {
+    const unlocked = expense({ currency: 'USD', convertedAmount: null, fxRate: null });
+    expect(sumSpend([unlocked])).toEqual({ total: 0, excluded: 1 });
   });
 });
 

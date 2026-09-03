@@ -98,6 +98,8 @@ class FakeExpenseRepository {
       amount: 6450,
       currency: 'INR',
       convertedAmount: 6450,
+      fxRate: 1,
+      fxRateDate: '2026-08-10',
       baseCurrency: 'INR',
       merchant: 'Uber',
       note: 'Airport transfer',
