@@ -140,7 +140,7 @@ and `pnpm run build` handle the ordering.
 ```
 
 `frontend/` and `backend/` are separate codebases (own package.json, tsconfig, tests)
-that ship as **one** Firebase App Hosting deploy: a single Node process routes
+that ship as **one** deploy — a Docker image on Render: a single Node process routes
 `/api/*` to Nest and everything else to Angular's SSR handler. That process is
 `server.mjs` at the repo root — see "The deploy" below.
 
@@ -358,10 +358,25 @@ those into build args; on any other host it needs an explicit `--build-arg`. The
 URLs — `<loc>` in the sitemap, `og:image`, `canonical` — must be decided before
 the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
 `__PUBLIC_ORIGIN__` sentinel that survives prerendering into every generated
-file, and `scripts/stamp-seo.mjs` replaces it across `dist/frontend/browser` as
-the last step of `pnpm run build`. Unset, it substitutes `''` and everything
-stays root-relative and valid. It must carry the scheme: the value is
-substituted verbatim, so a bare hostname yields a `<loc>` that is not a URL.
+file, and `scripts/stamp-seo.mjs` replaces it across **the whole
+`dist/frontend` tree** as the last step of `pnpm run build`.
+
+**It must not narrow to `browser/` again.** It did, and the deployed site served
+a literal `__PUBLIC_ORIGIN__` in its `canonical` and `og:image`: Angular keeps
+its own copies of the page HTML under `server/` — `index.server.html` and the
+`assets-chunks/*.mjs` templates, `index_csr_html.mjs` among them — and those are
+what the SSR handler serves. `sitemap.xml` and `robots.txt` looked right the
+whole time because they come from `browser/`, which is what made it hard to see.
+`.mjs` is in the stampable extension set for exactly this reason.
+
+Unset, `PUBLIC_ORIGIN` substitutes `''` and everything stays root-relative and
+valid. It must carry the scheme: the value is substituted verbatim, so a bare
+hostname yields a `<loc>` that is not a URL.
+
+**`pnpm run verify:deploy <url>`** checks the deployed result of all of this —
+`ng-server-context` present, no sentinel surviving, and the converter configured
+on another origin. Local green does not mean deployed correct: SSR fell back to
+CSR in production while every test passed and the page looked fine.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and

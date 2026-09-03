@@ -223,14 +223,17 @@ set to `https://actuo.onrender.com`; change it when a custom domain is attached
 and **redeploy**, because a runtime variable cannot reach already-prerendered
 HTML.
 
-After the first deploy, the one check that matters:
+After any deploy, run the smoke check:
 
 ```bash
-curl -s https://actuo.onrender.com/ | grep -o 'ng-server-context="[^"]*"'
+pnpm run verify:deploy https://actuo.onrender.com
 ```
 
-Empty output means `NG_ALLOWED_HOSTS` does not cover the hostname and Angular has
-silently fallen back to client-side rendering — see *Allowed hosts* below.
+It checks the four things that are only true when the deploy is correct — the API
+answers, `/` actually server-renders, no `__PUBLIC_ORIGIN__` sentinel survives,
+and the converter is configured on another origin — and names the fix for each
+failure. Every check is there because that thing broke in production without
+anything else noticing.
 
 ### Anywhere else
 
@@ -263,8 +266,11 @@ back to client-side rendering, which throws away the SSR and structured-data wor
 on the public pages. `NG_ALLOWED_HOSTS` in `render.yaml` is that list, and it
 *replaces* the build-time list in `angular.json` rather than adding to it.
 
-After any deploy, confirm the HTML for `/` contains `ng-server-context`. If it
-does not, `NG_ALLOWED_HOSTS` does not match your hostname.
+After any deploy, confirm the HTML for `/` contains `ng-server-context` — which
+is what `pnpm run verify:deploy` does. If it does not, `NG_ALLOWED_HOSTS` is not
+reaching the running container. Declaring it in `render.yaml` is not sufficient
+on its own: a service created by hand rather than from the Blueprint never had
+those `envVars` applied, so check the service's own environment first.
 
 ### The cross-origin demo on a deployed URL
 

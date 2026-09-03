@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createNestApp } from '../src/bootstrap.js';
 
 /**
- * The routing contract that makes the combined Firebase App Hosting deploy work.
+ * The routing contract that makes the combined single-process deploy work.
  *
  * In production a single Node process serves both: Nest owns `/api/*` and the
  * Angular SSR handler is appended after it to catch everything else. Two things
