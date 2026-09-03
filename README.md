@@ -216,24 +216,42 @@ project before the first deploy.
 the image build, and free build memory is not enough. Free instances also spin
 down when idle, and the cold start here is an image pull plus a Nest boot.
 
-**`PUBLIC_ORIGIN` is build-time**, and works on Render without a `--build-arg`
-flag: Render translates a service environment variable into a Docker build
-argument, and the Dockerfile declares `ARG PUBLIC_ORIGIN` to receive it. It is
-set to `https://actuo.onrender.com`; change it when a custom domain is attached
-and **redeploy**, because a runtime variable cannot reach already-prerendered
-HTML.
+**`PUBLIC_ORIGIN` is the canonical origin, and changing it needs a redeploy.**
+Its build-time half works on Render without a `--build-arg` flag: Render
+translates a service environment variable into a Docker build argument, and the
+Dockerfile declares `ARG PUBLIC_ORIGIN` to receive it. A runtime variable cannot
+reach already-prerendered HTML, so a restart is not enough.
 
-After any deploy, run the smoke check:
+`server.mjs` reads it again at runtime and **308-redirects page requests
+arriving on any other hostname** to it, so the two origins the service answers
+on do not compete as duplicate content. `/api` is never redirected, and neither
+is `localhost`. It also **switches itself off** if `PUBLIC_ORIGIN` names a host
+missing from `NG_ALLOWED_HOSTS` — that pairing would redirect the alias to a
+host Angular answers 400 for, taking every page down while `/api/health` still
+reported healthy.
+
+**The site answers on two hostnames**, and both must be in `NG_ALLOWED_HOSTS`
+(a comma-separated list) or their pages return `400 Bad Request` naming the
+host:
+
+| Hostname | Role |
+|---|---|
+| `actuo.programmersingh.dev` | canonical — `PUBLIC_ORIGIN`, and what every `canonical`, `og:image` and sitemap `<loc>` names |
+| `actuo.onrender.com` | alias — 308s to the canonical one |
+
+After any deploy, run the smoke check against the canonical origin:
 
 ```bash
-pnpm run verify:deploy https://actuo.onrender.com
+pnpm run verify:deploy https://actuo.programmersingh.dev
+pnpm run verify:deploy https://actuo.onrender.com    # expects the redirect
 ```
 
-It checks the four things that are only true when the deploy is correct — the API
+It checks the things that are only true when the deploy is correct — the API
 answers, `/` actually server-renders, no `__PUBLIC_ORIGIN__` sentinel survives,
-and the converter is configured on another origin — and names the fix for each
-failure. Every check is there because that thing broke in production without
-anything else noticing.
+the stamped origin *matches the URL being checked*, and the converter is
+configured on another origin — and names the fix for each failure. Every check
+is there because that thing broke in production without anything else
+noticing.
 
 ### Anywhere else
 

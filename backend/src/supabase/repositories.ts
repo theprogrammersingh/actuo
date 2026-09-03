@@ -99,6 +99,9 @@ export interface CreateExpenseInput {
   amount: number;
   currency: string;
   convertedAmount: number | null;
+  /** The rate behind `convertedAmount`, and the day it is from. Null together. */
+  fxRate: number | null;
+  fxRateDate: string | null;
   baseCurrency: string;
   merchant: string | null;
   note: string | null;
@@ -113,6 +116,8 @@ export type UpdateExpenseInput = Partial<
     | 'amount'
     | 'currency'
     | 'convertedAmount'
+    | 'fxRate'
+    | 'fxRateDate'
     | 'merchant'
     | 'note'
     | 'expenseDate'
@@ -137,6 +142,23 @@ export interface AppendToolCallInput {
   toolName: string;
   input: unknown;
   output: unknown;
+}
+
+/**
+ * One row of the `fx_rates` cache (PRD §6.5).
+ *
+ * `asOfDate` is the day that was asked for; `rateDate` is the day the rate is
+ * actually from. See the comment in `0003_fx.sql` for why both are stored and
+ * why the key is on the former.
+ */
+export interface FxRateRecord {
+  base: string;
+  quote: string;
+  asOfDate: string;
+  rateDate: string;
+  rate: number;
+  source: string;
+  fetchedAt: string;
 }
 
 // Interfaces
@@ -190,6 +212,19 @@ export interface BudgetRepository {
   }): Promise<Budget>;
 }
 
+/**
+ * The rate cache. Deliberately tiny: read one, write one.
+ *
+ * There is no delete and no invalidate — staleness is decided by the caller
+ * (`FxService`), because the rule depends on today's date and on the row's own
+ * `rateDate`, and putting it here would push a clock into the storage layer.
+ */
+export interface FxRateRepository {
+  find(base: string, quote: string, asOfDate: string): Promise<FxRateRecord | null>;
+  /** Upsert: a re-fetch of a stale same-day rate must overwrite, not conflict. */
+  save(record: Omit<FxRateRecord, 'fetchedAt'>): Promise<void>;
+}
+
 export interface ToolCallLogRepository {
   append(input: AppendToolCallInput): Promise<ToolCallLogEntry>;
   list(
@@ -233,6 +268,7 @@ export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
 export const ORG_REPOSITORY = Symbol('ORG_REPOSITORY');
 export const EXPENSE_REPOSITORY = Symbol('EXPENSE_REPOSITORY');
 export const BUDGET_REPOSITORY = Symbol('BUDGET_REPOSITORY');
+export const FX_RATE_REPOSITORY = Symbol('FX_RATE_REPOSITORY');
 export const TOOL_CALL_LOG_REPOSITORY = Symbol('TOOL_CALL_LOG_REPOSITORY');
 export const REFRESH_TOKEN_REPOSITORY = Symbol('REFRESH_TOKEN_REPOSITORY');
 export const AUDIT_LOG_REPOSITORY = Symbol('AUDIT_LOG_REPOSITORY');

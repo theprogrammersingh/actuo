@@ -21,7 +21,12 @@ import type {
   AuditLogEntry,
   ToolCallLogEntry,
 } from '@actuo/shared';
-import type { OrgMember, RefreshTokenRecord, UserRecord } from './repositories.js';
+import type {
+  FxRateRecord,
+  OrgMember,
+  RefreshTokenRecord,
+  UserRecord,
+} from './repositories.js';
 
 type Row = Record<string, any>;
 
@@ -67,6 +72,8 @@ export const toExpense = (r: Row): Expense => ({
   amount: num(r.amount),
   currency: r.currency,
   convertedAmount: numOrNull(r.converted_amount),
+  fxRate: numOrNull(r.fx_rate),
+  fxRateDate: r.fx_rate_date ?? null,
   baseCurrency: r.base_currency,
   merchant: r.merchant ?? null,
   note: r.note ?? null,
@@ -75,6 +82,18 @@ export const toExpense = (r: Row): Expense => ({
   expenseDate: r.expense_date,
   createdAt: r.created_at,
   deletedAt: r.deleted_at ?? null,
+});
+
+export const toFxRate = (r: Row): FxRateRecord => ({
+  base: r.base,
+  quote: r.quote,
+  asOfDate: r.as_of_date,
+  rateDate: r.rate_date,
+  // A rate is numeric(20,10); see the note at the top about stringy numerics.
+  // Here it would not concatenate, it would multiply as NaN, which is worse.
+  rate: num(r.rate),
+  source: r.source,
+  fetchedAt: r.fetched_at,
 });
 
 export const toBudget = (r: Row): Budget => ({

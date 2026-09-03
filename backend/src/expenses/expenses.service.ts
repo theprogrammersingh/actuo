@@ -8,6 +8,7 @@ import {
 import { EXPENSE_PAGE_DEFAULT, EXPENSE_PAGE_MAX } from '@actuo/shared';
 import type { Expense, ExpenseStatus, Page, Role } from '@actuo/shared';
 import { EnvService } from '../config/env.service.js';
+import { FxService } from '../fx/fx.service.js';
 import {
   AUDIT_LOG_REPOSITORY,
   EXPENSE_REPOSITORY,
@@ -36,6 +37,7 @@ export class ExpensesService {
 
   constructor(
     private readonly env: EnvService,
+    private readonly fx: FxService,
     @Inject(EXPENSE_REPOSITORY) private readonly expenses: ExpenseRepository,
     @Inject(ORG_REPOSITORY) private readonly orgs: OrgRepository,
     @Inject(AUDIT_LOG_REPOSITORY) private readonly audit: AuditLogRepository,
@@ -61,6 +63,7 @@ export class ExpensesService {
 
   async create(user: AuthenticatedUser, dto: CreateExpenseDto): Promise<Expense> {
     const baseCurrency = await this.baseCurrencyFor(user.orgId);
+    const locked = await this.fx.lock(dto.amount, dto.currency, baseCurrency, dto.expenseDate);
 
     const expense = await this.expenses.create({
       orgId: user.orgId,
@@ -70,10 +73,16 @@ export class ExpensesService {
       categoryId: dto.categoryId ?? null,
       amount: dto.amount,
       currency: dto.currency,
-      // PRD §6.5: converted_amount is filled by the FX pass. When the expense
-      // is already in the base currency there is nothing to convert, so it is
-      // set immediately; otherwise it stays null until rates are wired up.
-      convertedAmount: dto.currency === baseCurrency ? dto.amount : null,
+      // PRD §6.5. All three move together: an amount with no rate cannot be
+      // defended, a rate with no date cannot be reproduced.
+      //
+      // A null lock is normal, not a failure — the row is excluded and counted
+      // as it always was, and `backend/scripts/backfill-fx.mjs` fills it in
+      // later. Failing the save would let a currency API being down stop
+      // someone filing an expense.
+      convertedAmount: locked?.convertedAmount ?? null,
+      fxRate: locked?.rate ?? null,
+      fxRateDate: locked?.rateDate ?? null,
       baseCurrency,
       merchant: dto.merchant ?? null,
       note: dto.note ?? null,
@@ -106,17 +115,10 @@ export class ExpensesService {
 
     if (hasFieldEdits) {
       this.assertCanEdit(user, expense);
-      const baseCurrency = expense.baseCurrency;
-      const nextCurrency = fields.currency ?? expense.currency;
-      const nextAmount = fields.amount ?? expense.amount;
 
       current = await this.expenses.update(user.orgId, id, {
         ...fields,
-        // Keep converted_amount consistent with whatever amount/currency now
-        // are: a stale conversion is worse than an honest null.
-        ...(fields.amount !== undefined || fields.currency !== undefined
-          ? { convertedAmount: nextCurrency === baseCurrency ? nextAmount : null }
-          : {}),
+        ...(await this.relockFor(expense, fields)),
       });
       await this.safeAudit(user, 'expense.updated', id, { fields: Object.keys(fields) });
     }
@@ -269,6 +271,42 @@ export class ExpensesService {
           'Only draft and rejected expenses are editable.',
       );
     }
+  }
+
+  /**
+   * The conversion fields to write when an edit invalidates the locked rate,
+   * or `{}` when it does not.
+   *
+   * The easy one to miss is **`expenseDate`**: the lock is the rate on the
+   * expense's own day, so moving the day leaves a rate describing a conversion
+   * that never happened. That is not recomputing history — the user changed
+   * the facts it was locked against.
+   *
+   * A failed re-lock clears all three rather than keeping the old rate: null is
+   * excluded and counted, a leftover rate is wrong and looks authoritative.
+   */
+  private async relockFor(
+    expense: Expense,
+    fields: Partial<Pick<Expense, 'amount' | 'currency' | 'expenseDate'>>,
+  ): Promise<Partial<Pick<Expense, 'convertedAmount' | 'fxRate' | 'fxRateDate'>>> {
+    const rateChanged =
+      fields.amount !== undefined ||
+      fields.currency !== undefined ||
+      fields.expenseDate !== undefined;
+    if (!rateChanged) return {};
+
+    const locked = await this.fx.lock(
+      fields.amount ?? expense.amount,
+      fields.currency ?? expense.currency,
+      expense.baseCurrency,
+      fields.expenseDate ?? expense.expenseDate,
+    );
+
+    return {
+      convertedAmount: locked?.convertedAmount ?? null,
+      fxRate: locked?.rate ?? null,
+      fxRateDate: locked?.rateDate ?? null,
+    };
   }
 
   private async baseCurrencyFor(orgId: string): Promise<string> {

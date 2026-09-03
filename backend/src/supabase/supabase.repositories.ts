@@ -29,6 +29,8 @@ import type {
   CreateExpenseInput,
   ExpenseQuery,
   ExpenseRepository,
+  FxRateRecord,
+  FxRateRepository,
   ListAuditQuery,
   OrgMember,
   OrgRepository,
@@ -288,6 +290,8 @@ export class SupabaseExpenseRepository implements ExpenseRepository {
         amount: input.amount,
         currency: input.currency,
         converted_amount: input.convertedAmount,
+        fx_rate: input.fxRate,
+        fx_rate_date: input.fxRateDate,
         base_currency: input.baseCurrency,
         merchant: input.merchant,
         note: input.note,
@@ -306,6 +310,8 @@ export class SupabaseExpenseRepository implements ExpenseRepository {
     if (patch.amount !== undefined) row.amount = patch.amount;
     if (patch.currency !== undefined) row.currency = patch.currency;
     if (patch.convertedAmount !== undefined) row.converted_amount = patch.convertedAmount;
+    if (patch.fxRate !== undefined) row.fx_rate = patch.fxRate;
+    if (patch.fxRateDate !== undefined) row.fx_rate_date = patch.fxRateDate;
     if (patch.merchant !== undefined) row.merchant = patch.merchant;
     if (patch.note !== undefined) row.note = patch.note;
     if (patch.expenseDate !== undefined) row.expense_date = patch.expenseDate;
@@ -440,6 +446,46 @@ export class SupabaseBudgetRepository implements BudgetRepository {
       .single();
     if (error) fail(error, 'A budget for that category');
     return map.toBudget(data);
+  }
+}
+
+@Injectable()
+export class SupabaseFxRateRepository implements FxRateRepository {
+  constructor(private readonly supabase: SupabaseService) {}
+
+  async find(base: string, quote: string, asOfDate: string): Promise<FxRateRecord | null> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('fx_rates')
+      .select('*')
+      .eq('base', base)
+      .eq('quote', quote)
+      .eq('as_of_date', asOfDate)
+      .maybeSingle();
+    if (error) fail(error, 'FX rate lookup');
+    return data ? map.toFxRate(data) : null;
+  }
+
+  async save(record: Omit<FxRateRecord, 'fetchedAt'>): Promise<void> {
+    const { error } = await this.supabase
+      .getClient()
+      .from('fx_rates')
+      .upsert(
+        {
+          base: record.base,
+          quote: record.quote,
+          as_of_date: record.asOfDate,
+          rate_date: record.rateDate,
+          rate: record.rate,
+          source: record.source,
+          fetched_at: new Date().toISOString(),
+        },
+        // Upsert rather than insert: today's rate is re-fetched once the ECB
+        // publishes, and that second write must replace the provisional row
+        // rather than raise a unique violation the caller would have to catch.
+        { onConflict: 'base,quote,as_of_date' },
+      );
+    if (error) fail(error, 'FX rate cache write');
   }
 }
 

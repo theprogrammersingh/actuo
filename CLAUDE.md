@@ -93,6 +93,7 @@ pnpm run dev           # shared, then backend (:3000) + frontend (:4200)
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
+pnpm run backfill:fx   # lock ECB rates onto rows without one; dry run unless --apply
 ```
 
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
@@ -345,9 +346,23 @@ larger image beats a step that silently half-works.
 
 **`NG_ALLOWED_HOSTS` — a hard 400.** Angular checks `Host` and
 `X-Forwarded-Host` against an allowlist (SSRF). With one configured a miss is
-**400 `text/plain`**; only an *empty* list falls back to CSR. The env var is a
-comma list and is **unioned with** `angular.json`'s `security.allowedHosts`, not
-a replacement. `*.example.com` matches by suffix. Never set it to `*`.
+**400 `text/plain`** naming the host; only an *empty* list falls back to CSR.
+The env var is a comma list and is **unioned with** `angular.json`'s
+`security.allowedHosts`, not a replacement — `AngularAppEngine.getAllowedHosts`
+builds `new Set([...envList, ...manifest.allowedHosts])`, so `localhost` keeps
+working whatever is listed. `*.example.com` matches by suffix
+(`hostname.endsWith('.example.com')`, so it does **not** cover the bare apex).
+Never set it to `*`. Verified against `@angular/ssr`, not the docs.
+
+**Static files skip the check entirely**, which is how a half-broken deploy
+presents: `express.static` runs ahead of the Angular handler, so on a hostname
+that is not allowlisted `/sitemap.xml` and `/robots.txt` answer 200 while every
+SSR route 400s.
+
+The service answers on **two** hostnames — `actuo.onrender.com` and
+`actuo.programmersingh.dev` — so both are listed. The custom domain is listed
+exactly rather than as `*.programmersingh.dev`, which would admit every other
+subdomain of that zone.
 
 **Untrusted proxy headers — this is the silent one.** Angular deopts to CSR on
 any `x-forwarded-*` header it was not told to trust, returning a normal 200 that
@@ -360,9 +375,10 @@ Verify with `pnpm run verify:deploy <url>`, which tells the two apart. Reproduce
 the second locally:
 `curl -s -H 'X-Forwarded-For: 203.0.113.9' localhost:8080/ | grep ng-server-context`
 
-**`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one** — a `Dockerfile`
-`ARG`. On Render it is declared as a normal env var only because Render turns
-those into build args; on any other host it needs an explicit `--build-arg`. The public pages are prerendered, so absolute
+**`PUBLIC_ORIGIN` is read twice, and changing it needs a REBUILD.** It is a
+`Dockerfile` `ARG` for the build half; on Render it is declared as a normal env
+var only because Render turns those into build args, and on any other host it
+needs an explicit `--build-arg`. The public pages are prerendered, so absolute
 URLs — `<loc>` in the sitemap, `og:image`, `canonical` — must be decided before
 the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
 `__PUBLIC_ORIGIN__` sentinel that survives prerendering into every generated
@@ -378,8 +394,53 @@ Unset, `PUBLIC_ORIGIN` substitutes `''` and everything stays root-relative and
 valid. It must carry the scheme: the value is substituted verbatim, so a bare
 hostname yields a `<loc>` that is not a URL.
 
+The **second** read is at runtime, by `server.mjs`, and it is why one variable
+covers both rather than a `CANONICAL_ORIGIN` that would have to stay in step
+with it — the same reasoning that keeps `CONVERTER_URL` a single value. On a
+host that only passes it as a `--build-arg` it is absent at runtime and the
+redirect below is simply off.
+
+**The canonical redirect.** Two origins serving identical pages is duplicate
+content, and only one can be the `canonical` the prerendered HTML names, so
+`backend/src/common/canonical-redirect.ts` 308s page requests on any other
+hostname to `PUBLIC_ORIGIN`. Four things about it are load-bearing:
+
+- **`/api` can never reach it, by placement rather than by a check.** It is
+  registered after Nest, whose `setGlobalPrefix('/api')` scopes the not-found
+  router to `/api`, so every `/api/*` request is answered first — Render's
+  `/api/health` probe included. `routing-contract.e2e-spec.ts` pins that.
+- **It runs before the Angular handler**, deliberately, so it also covers the
+  static files that skip Angular's host check.
+- **It changes what an unknown host sees**: a 308 here instead of Angular's
+  400. The two guards compose. Not an open redirect — the target is always
+  built from `PUBLIC_ORIGIN`, never from the request.
+- **GET/HEAD only, and never loopback**, or `node server.mjs` locally would
+  bounce to production.
+
+**It refuses to run when `PUBLIC_ORIGIN`'s host is not in `NG_ALLOWED_HOSTS`**,
+and that guard is the reason the two variables can be changed independently.
+Without it, moving `PUBLIC_ORIGIN` to a host the allowlist does not cover makes
+the alias 308 to a host Angular answers 400 for — **every page dead**, while
+`/api/health` still returns 200 so Render reports a healthy deploy and never
+rolls back. Refusing degrades that to "both hosts keep serving", and the service
+log names both values.
+
+`isHostAllowed`/`parseAllowedHosts` duplicate Angular's matcher, which is safe in
+the only direction that matters: the check can *only* disable a redirect. Drift
+that wrongly says "allowed" leaves the behaviour it would have had anyway; drift
+that wrongly says "not allowed" still serves every host. Angular's list stays the
+authority on what is served — this decides only whether to redirect.
+
+It lives under `backend/` because that is the only workspace with a test runner
+that can reach it; `server.mjs` imports it from `dist` exactly as it already
+imports `createNestApp`.
+
 **`pnpm run verify:deploy <url>`** checks the deployed result. Local green does
-not mean deployed correct.
+not mean deployed correct. It also asserts the **stamped origin matches the URL
+being verified** — a missing sentinel only proves something was substituted, not
+that the right thing was, and attaching the custom domain made every page it
+served name the old origin — and it recognises an **alias** origin, reporting
+the redirect and skipping the page checks that belong to the canonical one.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and
@@ -415,10 +476,12 @@ Getting them confused is how the UI briefly offered an Approve button that alway
 ## Module map
 
 **backend/** — `auth/` (argon2id + JWT, rotating refresh, guards), `expenses/`
-(CRUD, search, the status state machine), `budgets/`, `reports/` (polled job for
+(CRUD, search, the status state machine), `fx/` (ECB rates, the daily cache,
+and the rate lock — no controller, deliberately), `budgets/`, `reports/` (polled job for
 the cancellation demo), `tool-calls/` (audit log), `orgs/`, `config/`
 (`GET /api/config` serves the Gemini model list so it is editable without a
-rebuild), `supabase/` (client + repository seam), `common/` (rate limiting).
+rebuild), `supabase/` (client + repository seam), `common/` (rate limiting, and the
+canonical-host redirect `server.mjs` mounts).
 Migrations live in `supabase/migrations/`. Seed users: `priya@actuo.demo`
 (owner), `arjun@actuo.demo` (member), password `Demo1234!`.
 
@@ -503,11 +566,7 @@ finished in both the source and the test count.
 
 ## Money: never add two currencies
 
-There is no FX pass. `expenses.service.ts` writes `converted_amount` **only**
-when the expense is already in the org's base currency, so it is `null` for
-every foreign row — and the seed data has INR, USD and EUR.
-
-So a row counts toward a total only when it has a base-currency value, and the
+A row counts toward a total only when it has a base-currency value, and the
 ones that do not are **counted and stated**, never dropped and never added:
 
 - Frontend: `core/expense/amount.ts` — `isConverted()`, `sumSpend()` (returns
@@ -520,15 +579,58 @@ ones that do not are **counted and stated**, never dropped and never added:
 
 The earlier code fell back to the raw `amount`, on the reasoning that a slightly
 wrong number beat a bar reading zero. It was not slightly wrong: a $200 charge
-was counted as ₹200. When a real FX pass starts filling `converted_amount`,
-those rows re-enter every total with no code change.
+was counted as ₹200. That rule is what let the FX pass land without touching a
+line of `amount.ts`: foreign rows re-entered every total the moment
+`converted_amount` started being filled.
+
+## FX: the rate is locked at write time, from the ECB
+
+`backend/src/fx/` converts a foreign expense **once**, at its own
+`expense_date`, and records what it used. `ExpensesService.create` and
+`.update` write three fields together — `converted_amount`, `fx_rate`,
+`fx_rate_date` — because a converted amount with no rate cannot be defended and
+a rate with no date cannot be reproduced.
+
+**Rates come from the ECB via `api.frankfurter.dev`**, which is deliberately the
+same publisher the embedded converter shows: Cambiaro calls it from the browser,
+so the advisory widget and the ledger agree without the ledger depending on the
+widget. Cambiaro itself is **not** a rate source and cannot be one — it is a
+static client-side app with no HTTP API (`/api/*` all 404), so its only
+programmatic surface is `document.modelContext`, which exists inside a browser
+page. Reading a figure out of the frame remains forbidden for the reasons below.
+
+Four things that look like details and are not:
+
+- **`fx_rate_date` is not `expense_date`.** The ECB publishes once per working
+  day, so a Saturday expense locks Friday's rate. Both dates are stored, and
+  the UI prints the rate's own date — claiming the expense's date would name a
+  rate nobody published. Real seed data exercises this: AWS on 2026-08-29.
+- **`FxService.rateOn` never throws.** A missing rate returns `null`, the three
+  fields are written as null, and the row is excluded and counted — the state
+  the rules above already handle. A currency API being down must not stop
+  someone filing an expense.
+- **`fx_rates` is keyed on the date *asked for*, not the date the rate is
+  from.** Keyed the other way, every weekend lookup would miss the cache
+  forever. The one entry that can go stale is today's while it still stands in
+  for an earlier day, before the ~16:00 CET publication.
+- **An edit re-locks, and `expenseDate` is the easy one to miss.** Amount,
+  currency *and* date each invalidate the lock; all three fields move together,
+  including when the new lock fails.
+
+`backend/scripts/backfill-fx.mjs` (`pnpm run backfill:fx`, dry run unless
+`--apply`) locks rates onto rows that have none, and with `--restate` onto rows
+whose `converted_amount` has no rate behind it — which the demo seed's foreign
+rows were, at hand-written rates nobody published. It lives under `backend/`
+because pnpm hoists nothing: a root script cannot resolve `@nestjs/core`.
 
 **The embedded converter does not change this, and must not.** `converter/`
 frames a separate converter app on four surfaces (`/convert`, `/agent`, the
 dashboard's excluded-rows notice, and expense rows in another currency). It is
-advisory: a rate a person reads off another site is not the historical rate
-locked at entry, so nothing it shows may reach `converted_amount`, `sumSpend()`,
-`sumByCategory()`, or the `excludedNotice()` copy.
+advisory: a rate a person reads off another site *today* is not the historical
+rate locked at entry, so nothing it shows may reach `converted_amount`,
+`sumSpend()`, `sumByCategory()`, or the `excludedNotice()` copy. The FX pass
+makes this sharper, not softer — there is now a real locked rate for the frame's
+number to contradict.
 
 That is enforced structurally rather than by good intentions:
 `CurrencyConverter` has **no `output()`, no `postMessage` listener, and never

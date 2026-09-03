@@ -11,6 +11,9 @@
  */
 
 const SENTINEL = '__PUBLIC_ORIGIN__';
+
+/** Not a failure: the check does not apply to this origin. */
+class Skip extends Error {}
 const TIMEOUT_MS = 20_000;
 
 const base = (process.argv[2] ?? process.env.DEPLOY_URL ?? '').trim().replace(/\/+$/, '');
@@ -19,10 +22,31 @@ if (!base) {
   process.exit(2);
 }
 
-async function get(path) {
+async function get(path, { follow = true } = {}) {
   const url = `${base}${path}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-  return { url, status: response.status, body: await response.text() };
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+    // `manual` is how an alias origin is caught: fetch follows redirects by
+    // default, so every check below would silently describe the canonical
+    // origin while claiming to describe this one.
+    redirect: follow ? 'follow' : 'manual',
+  });
+  return {
+    url,
+    status: response.status,
+    location: response.headers.get('location'),
+    body: await response.text(),
+  };
+}
+
+/** The absolute URL the SEO stamp wrote into each file, or null. */
+function stampedUrl(path, text) {
+  const pattern = {
+    '/': /<link rel="canonical" href="([^"]+)"/,
+    '/sitemap.xml': /<loc>([^<]+)<\/loc>/,
+    '/robots.txt': /^Sitemap:\s*(\S+)/m,
+  }[path];
+  return pattern ? (pattern.exec(text)?.[1] ?? null) : null;
 }
 
 const failures = [];
@@ -44,9 +68,24 @@ try {
   fail('/api/health', String(error), 'The deploy is unreachable, or still waking up.');
 }
 
+// --- Is this the canonical origin, or an alias that redirects to it? --------
+let isAlias = false;
+try {
+  const { status, location } = await get('/', { follow: false });
+  if (status >= 300 && status < 400 && location) {
+    isAlias = true;
+    const target = new URL(location, base).origin;
+    pass('/ canonical redirect', `${status} -> ${target}`);
+    console.log(`\n  This origin is an alias. Run the checks below against ${target}.\n`);
+  }
+} catch (error) {
+  fail('/ canonical redirect', String(error), 'Could not fetch it.');
+}
+
 // --- SSR is actually on -----------------------------------------------------
 let home = '';
 try {
+  if (isAlias) throw new Skip();
   const { status, body } = await get('/');
   home = body;
   /*
@@ -71,11 +110,12 @@ try {
     );
   }
 } catch (error) {
-  fail('/', String(error), 'The deploy is unreachable.');
+  if (!(error instanceof Skip)) fail('/', String(error), 'The deploy is unreachable.');
 }
 
 // --- The SEO stamp reached every copy of the HTML ---------------------------
 for (const [path, body] of [['/', home], ['/sitemap.xml', null], ['/robots.txt', null]]) {
+  if (isAlias) break;
   try {
     const text = body ?? (await get(path)).body;
     if (!text) continue;
@@ -85,8 +125,24 @@ for (const [path, body] of [['/', home], ['/sitemap.xml', null], ['/robots.txt',
         `still contains ${SENTINEL}`,
         'PUBLIC_ORIGIN is a BUILD arg, so a restart cannot fix it — redeploy. If only some paths are affected, scripts/stamp-seo.mjs is not covering the whole dist tree.',
       );
+      continue;
+    }
+
+    /*
+     * A missing sentinel only proves something was substituted, not that the
+     * right thing was. With a custom domain attached, the stamp kept naming the
+     * old origin on every page the new one served — canonical, og:image and
+     * <loc> all pointing somewhere else, which no other check here noticed.
+     */
+    const stamped = stampedUrl(path, text);
+    if (stamped && new URL(stamped).origin !== new URL(base).origin) {
+      fail(
+        `${path} stamped`,
+        `names ${new URL(stamped).origin}, not ${new URL(base).origin}`,
+        'PUBLIC_ORIGIN is set to a different origin than the one being verified. It is a BUILD arg, so change it and REDEPLOY — a restart cannot reach prerendered HTML.',
+      );
     } else {
-      pass(`${path} stamped`, 'no sentinel');
+      pass(`${path} stamped`, stamped ? `names ${new URL(stamped).origin}` : 'no sentinel');
     }
   } catch (error) {
     fail(`${path} stamped`, String(error), 'Could not fetch it.');

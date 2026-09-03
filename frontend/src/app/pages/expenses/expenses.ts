@@ -13,7 +13,7 @@ import type { Expense, Page, TransitionAction } from '@actuo/shared';
 
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Badge, Button, EmptyState, ErrorState, Input, Skeleton } from '../../ui';
-import { formatDate, formatMoney } from '../../core/format/money.js';
+import { formatDate, formatMoney, formatRate } from '../../core/format/money.js';
 import { expenseAmount, expenseCurrency, isConverted } from '../../core/expense/amount.js';
 import { CurrencyConverter } from '../../converter/currency-converter.js';
 import { ConverterSession } from '../../converter/converter-session.js';
@@ -200,11 +200,14 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                   <td class="px-4 py-3">
                     <ui-badge [status]="row.status" />
                   </td>
-                  <td
-                    class="tabular px-4 py-3 text-right font-medium whitespace-nowrap text-body"
-                    data-money
-                  >
-                    {{ amountText(row) }}
+                  <!-- The tabular class sits on the cell, not the spans: it
+                       inherits, so the figure and the rate line beneath it both
+                       get the tabular numerals §2.3 requires for money. -->
+                  <td class="tabular px-4 py-3 text-right whitespace-nowrap" data-money>
+                    <span class="font-medium text-body">{{ amountText(row) }}</span>
+                    @if (lockedRateText(row); as locked) {
+                      <span class="mt-0.5 block text-xs font-normal text-muted">{{ locked }}</span>
+                    }
                   </td>
                   <td class="px-4 py-3 text-right align-top">
                 <!--
@@ -320,6 +323,14 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                   {{ amountText(row) }}
                 </span>
               </div>
+
+              <!-- Full width, below the header row rather than tucked under the
+                   amount: at 390px the rate line is ~246px, and inside the
+                   right-aligned block it left the merchant name 67px to
+                   truncate into. -->
+              @if (lockedRateText(row); as locked) {
+                <p class="tabular mt-1 text-xs text-muted">{{ locked }}</p>
+              }
 
               @if (row.note) {
                 <p class="mt-2 text-sm text-muted">{{ row.note }}</p>
@@ -809,6 +820,29 @@ export class Expenses {
    */
   protected amountText(expense: Expense): string {
     return formatMoney(expenseAmount(expense), expenseCurrency(expense));
+  }
+
+  /**
+   * What the figure above it was converted from, and on what rate — or null
+   * when there is nothing to explain.
+   *
+   * This is the visible difference between the locked rate and the advisory
+   * converter sitting on the same row. The converter answers "what is this
+   * worth today"; this line says what the org's books actually used, on the
+   * expense's own date, and it never changes afterwards.
+   *
+   * The date shown is `fxRateDate`, not `expenseDate`, and they legitimately
+   * differ: the ECB publishes once per working day, so a Saturday expense
+   * carries Friday's rate. Printing the expense's own date here would claim a
+   * rate that was never published.
+   */
+  protected lockedRateText(expense: Expense): string | null {
+    if (expense.fxRate === null || expense.fxRateDate === null) return null;
+    if (expense.currency === expense.baseCurrency) return null;
+
+    const original = formatMoney(expense.amount, expense.currency);
+    const rate = formatRate(expense.fxRate);
+    return `${original} · 1 ${expense.currency} = ${rate} ${expense.baseCurrency} on ${formatDate(expense.fxRateDate)}`;
   }
 
   reload(): void {

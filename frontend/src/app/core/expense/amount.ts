@@ -24,10 +24,11 @@ export function expenseAmount(expense: Expense): number {
 /**
  * Whether this row's value is expressed in the org's base currency.
  *
- * There is no FX pass yet (PRD §6.5), so `convertedAmount` is filled only when
- * the expense was already filed in the base currency and is `null` otherwise.
- * Anything false here is a number in a *different unit*, and the currency to
- * print beside it is `expense.currency`, not `expense.baseCurrency`.
+ * `convertedAmount` is filled by the FX pass (PRD §6.5) from the ECB rate on
+ * the expense's own date, and stays `null` when no rate could be locked — an
+ * unreachable publisher, or a currency the ECB does not publish. Anything
+ * false here is a number in a *different unit*, and the currency to print
+ * beside it is `expense.currency`, not `expense.baseCurrency`.
  */
 export function isConverted(expense: Expense): boolean {
   return expense.convertedAmount !== null || expense.currency === expense.baseCurrency;
@@ -86,10 +87,17 @@ export function sumSpend(expenses: readonly Expense[]): SpendTotal {
   return { total, excluded };
 }
 
-/** One line of copy for an excluded-rows notice, or `null` when nothing was. */
+/**
+ * One line of copy for an excluded-rows notice, or `null` when nothing was.
+ *
+ * The copy used to say conversion "isn't live yet", which was true before the
+ * FX pass and is not now. An excluded row today means no rate could be locked
+ * for it, which is a narrower and rarer thing — and the reason it names the
+ * rate rather than the feature.
+ */
 export function excludedNotice(excluded: number): string | null {
   if (excluded <= 0) return null;
   const noun = excluded === 1 ? 'expense' : 'expenses';
   const verb = excluded === 1 ? 'isn’t' : 'aren’t';
-  return `${excluded} ${noun} in other currencies ${verb} included — currency conversion isn’t live yet.`;
+  return `${excluded} ${noun} in other currencies ${verb} included — no exchange rate could be locked for ${excluded === 1 ? 'it' : 'them'}.`;
 }

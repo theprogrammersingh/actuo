@@ -17,6 +17,8 @@ function expense(overrides: Partial<Expense> = {}): Expense {
     amount: 100,
     currency: 'INR',
     convertedAmount: null,
+    fxRate: null,
+    fxRateDate: null,
     baseCurrency: 'INR',
     merchant: 'Barista',
     note: null,
@@ -178,9 +180,9 @@ describe('Expenses', () => {
   describe('currency labelling', () => {
     /**
      * `baseCurrency || currency` printed an unconverted $50 under the org's ₹
-     * symbol. There is no FX pass (PRD §6.5), so `convertedAmount` is null for
-     * every foreign row — the label was wrong for all of them, by roughly a
-     * factor of ninety.
+     * symbol — wrong by roughly a factor of ninety. A row is unconverted when
+     * the FX pass could not lock a rate for it (PRD §6.5), which is rarer than
+     * it was but still the case the label has to get right.
      */
     it('labels an unconverted row with the currency it was filed in', async () => {
       api.get.mockResolvedValue(
@@ -191,6 +193,57 @@ describe('Expenses', () => {
 
       expect(text()).toContain('$');
       expect(text()).not.toContain('₹');
+    });
+
+    describe('the locked rate', () => {
+      const figma = expense({
+        id: 'figma',
+        merchant: 'Figma',
+        amount: 20,
+        currency: 'USD',
+        convertedAmount: 1908.6,
+        fxRate: 95.43,
+        // A Sunday expense. The ECB published on the Friday, and the line must
+        // say the Friday — claiming the Sunday would name a rate that never
+        // existed.
+        expenseDate: '2026-08-16',
+        fxRateDate: '2026-08-14',
+        baseCurrency: 'INR',
+      });
+
+      it('shows what the figure was converted from, at what rate and on what day', async () => {
+        api.get.mockResolvedValue(page([figma]));
+        create();
+        await settle();
+
+        const cell = tableRows()[0].querySelector('td:nth-child(4)') as HTMLElement;
+        expect(cell.textContent).toContain('$20');
+        expect(cell.textContent).toContain('1 USD = 95.43 INR');
+        expect(cell.textContent).toContain('14 Aug 2026');
+        expect(cell.textContent).not.toContain('16 Aug 2026');
+      });
+
+      it('says nothing on a row filed in the base currency', async () => {
+        api.get.mockResolvedValue(
+          page([expense({ id: 'inr', currency: 'INR', baseCurrency: 'INR', fxRate: 1 })]),
+        );
+        create();
+        await settle();
+
+        // Nothing was converted, so there is nothing to explain and a "1 INR =
+        // 1 INR" line would be pure noise on most of the table.
+        expect(tableRows()[0].textContent).not.toContain('1 INR = ');
+      });
+
+      it('says nothing when no rate could be locked', async () => {
+        api.get.mockResolvedValue(
+          page([expense({ id: 'usd', currency: 'USD', convertedAmount: null, fxRate: null })]),
+        );
+        create();
+        await settle();
+
+        expect(tableRows()[0].textContent).not.toContain(' = ');
+      });
     });
 
     /**
@@ -280,6 +333,8 @@ describe('Expenses', () => {
             amount: 50,
             currency: 'USD',
             convertedAmount: 4200,
+            fxRate: null,
+            fxRateDate: null,
             baseCurrency: 'INR',
           }),
         ]),

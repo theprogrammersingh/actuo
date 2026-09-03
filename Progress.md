@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-09-03 · **Baseline:** 9 shared · 65 backend unit · 34 backend e2e · 786 frontend
+**Last audited:** 2026-09-03 · **Baseline:** 12 shared · 114 backend unit · 34 backend e2e · 803 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -143,29 +143,33 @@ the figure matches a hand-check against the expense rows.
 **Verify:** submit as member, approve as owner, confirm the member cannot approve
 their own expense.
 
-## §6.5 Multi-currency — 🟡 ⚠️
+## §6.5 Multi-currency — ✅
 
 | Item | Phase | Status | Notes |
 |---|---|---|---|
 | Original + converted amounts stored | 1 | ✅ | Columns exist. `core/expense/amount.ts` owns the rule: `sumSpend()` adds only base-currency rows and reports the rest |
-| Live FX + daily cache | 1 | ⬜ | No FX client, no cache, no rates table. The embedded converter does **not** count — see below |
-| Historical rate lock | 1 | ⬜ | No rate column |
+| Live FX + daily cache | 1 | ✅ | `backend/src/fx/` reads ECB rates from `api.frankfurter.dev` and caches them in `fx_rates` (migration `0003`). Keyed on the date *asked for*, not the date the rate is from, or every weekend lookup would miss forever; the only entry that can go stale is today's while it still stands in for an earlier day. `FxService.rateOn` returns `null` rather than throwing, so an unreachable publisher cannot stop an expense being filed |
+| Historical rate lock | 1 | ✅ | `expenses.fx_rate` + `fx_rate_date`, written with `converted_amount` at the expense's own date. **`fx_rate_date` is not `expense_date`** — the ECB publishes once per working day, so a Saturday expense locks Friday's rate, and the row prints the rate's own date. An edit re-locks on amount, currency *or* date. Verified live: AWS filed 2026-08-29 (a Saturday) carries the 2026-08-28 rate |
 | Embedded converter (advisory) | 1 | ✅ | `converter/currency-converter.ts` frames a separate converter app on `/convert`, `/agent`, the dashboard notice and foreign-currency expense rows. One frame at a time, lazily mounted, `CONVERTER_URL` from `GET /api/config` |
 
-> **Totals are now honest about what they exclude.** `convertedAmount` is still
-> only set when the currency already equals the base currency, so foreign rows
-> have no base-currency value. They used to be added at face value — a $200
-> charge counted as ₹200. Now a row counts only when it has a converted value,
-> and the ones that do not are **counted and stated**: `sumSpend()` returns
-> `{total, excluded}`, `sumByCategory()` returns `unconverted`, and that surfaces
-> as `BudgetStatus.unconvertedCount`, a muted line on the dashboard and budgets
-> screens, and a field in the `get_budget_status` tool result so the Copilot can
-> qualify the figure. Row labels follow the same rule — an unconverted $50 prints
-> as `$50`, not `₹50`.
+> **The exclusion rules were what made FX cheap to land.** `sumSpend()` returns
+> `{total, excluded}` and `sumByCategory()` returns `unconverted` — a row counts
+> only when it has a base-currency value, and the ones that do not are counted
+> and stated rather than added at face value. That held, so foreign rows
+> re-entered every total the moment `converted_amount` started being filled:
+> **`core/expense/amount.ts` needed no logic change at all**, only a comment and
+> a line of copy that had gone out of date. `unconvertedCount` still exists and
+> still reaches `get_budget_status`; it is now normally 0, and means "no rate
+> could be locked" rather than "FX does not exist".
 >
-> This is the honest interim, not the feature: real FX (live rates, daily cache,
-> historical lock) is still ⬜, and the moment `converted_amount` starts being
-> filled, those rows re-enter every total with no code change.
+> **The seed's foreign rows were worse than excluded — they were quietly
+> wrong.** They shipped with a `converted_amount` at hand-written rates (₹87/$
+> for Figma, ₹94/€ for Sentry) that no publisher ever quoted, so they counted
+> toward every total with nothing to explain them. `--restate` replaced all five
+> with dated ECB rates, and picked up two real rows (AWS $200, Starbucks $45)
+> that had no conversion at all. Applied 2026-09-03: 7 rows locked, 0 failures,
+> books up ₹25,136, and the dashboard's 14-day figure hand-checks to ₹54,669
+> against its rows.
 >
 > **The embedded converter does not change any of that, deliberately.** It is a
 > reference a person reads, framed from a separate origin; it writes nothing,
@@ -178,7 +182,8 @@ their own expense.
 > it, the change would be wrong.
 
 **Verify:** file expenses in two currencies and confirm the dashboard total is
-not a naive sum, and that it says how many rows it left out.
+not a naive sum. A foreign row shows what it was converted from and on which
+day's rate; a row on a weekend names the preceding working day.
 
 ## §6.6 Analytics — 🟡
 
@@ -211,7 +216,7 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | Confirmation before mutating tools | 0 | ✅ | In-chat card. PRD says "native dialog"; in-chat was chosen deliberately |
 | Key-setup flow when no key | 0 | ✅ | Opens into setup rather than failing silently |
 | Embeddable via one `<script>` | 3 | ⬜ | It is an Angular component inside the app shell |
-| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. The synthetic partner page and its :4201 server are gone: dev and production now frame the same independently deployed converter, so there is no cross-origin path that is only exercised in one of them. **Verified 2026-09-03 in Chrome 151 with the flag**, framing the deployed converter from `localhost:4200`: all seven of its tools discovered over a real origin boundary, badges correct (4 read-only / 3 mutating), and `executeTool(convertCurrency, {amount:200,from:'EUR',to:'INR'})` returned `200 EUR = 22,018.00 INR` with the embedded widget moving to match. Not yet run from a *deployed* Actuo — see the rough edges |
+| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. The synthetic partner page and its :4201 server are gone: dev and production now frame the same independently deployed converter, so there is no cross-origin path that is only exercised in one of them. **Verified 2026-09-03 in Chrome 151 with the flag**, first from `localhost:4200` — all seven of its tools discovered over a real origin boundary, badges correct (4 read-only / 3 mutating), and `executeTool(convertCurrency, {amount:200,from:'EUR',to:'INR'})` returning `200 EUR = 22,018.00 INR` with the embedded widget moving to match — and then **from the deployed Actuo at `/agent`**, which closes the last gap: two genuinely public origins, neither serving the other |
 
 ## §6.9 Admin & Settings — 🟡
 
@@ -233,7 +238,7 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
 | **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
-| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier in-repo page unprovable. It is now a separately built, independently deployed app Actuo does not own, in dev as well as on a deploy |
+| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier in-repo page unprovable. It is now a separately built, independently deployed app Actuo does not own, and it is proven from the deploy itself, not only from localhost |
 | Security annotations | ✅ | `readOnlyHint` on all five, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the converter's tools, whose results carry third-party rate data; shown as a badge on the tool-call card |
 | `getTools()` discovery | ✅ | Drives the cross-origin path and the `/agent` panel; re-runs on `toolchange`. The Copilot still reads its own registry for local tools, deliberately — see "the tool registry decision" |
 | `executeTool()` + manual debug panel | 🟡 | `executeTool()` done, and `/agent` renders `Copilot.crossOriginTools` and the registry's `invocationLog()`. Still read-only: there is no form to invoke a tool by hand with arbitrary arguments |
@@ -281,60 +286,47 @@ and the offline banner appearing and clearing on the network events.
 | Supabase call timeouts | ✅ | 8s deadline — a stall used to hang the request forever |
 | Unit tests for tool `execute()` | ✅ | — |
 | Structured logging / error tracking | ⬜ | Nest logger only; no Sentry-tier reporting |
-| **CI** | 🟡 | `.github/workflows/ci.yml` runs the full Definition of Done gate on push and PR. Never executed by GitHub — verified by running its exact command sequence locally |
-| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts` |
+| **CI** | ✅ | `.github/workflows/ci.yml` runs the full Definition of Done gate on push and PR, and **has run on GitHub** — five successful runs, most recently on PR #4 |
+| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts`. It also mounts `common/canonical-redirect.ts`, which 308s pages on any non-canonical hostname — placed after Nest so `/api` can never reach it, and before the Angular handler so it also covers the static files that skip Angular's host check. It self-disables when `PUBLIC_ORIGIN`'s host is not in `NG_ALLOWED_HOSTS`, because that combination would 308 the alias to a host Angular 400s: every page down behind a health check that still returns 200 |
 
-## §12 Submission criteria — ⬜
+## §12 Submission criteria — 🟡
 
 | Item | Status | Notes |
 |---|---|---|
-| **Public deployed URL** | 🟡 | **Live at `https://actuo.onrender.com`** — `/api/health` returns 200. `server.mjs` composes Nest under `/api` with the Angular SSR handler from a committed `Dockerfile`; Firebase App Hosting was abandoned after three distinct buildpack failures against this workspace monorepo (see README *Why a Dockerfile*). Still 🟡, not ✅, because the deployed site is **defective in two ways**: `/` does not server-render (see §8.5) and it served a literal `__PUBLIC_ORIGIN__` in `canonical`/`og:image`. The stamp half is fixed in `scripts/stamp-seo.mjs` and needs a redeploy; the SSR half needs `NG_ALLOWED_HOSTS` set on the service. `pnpm run verify:deploy <url>` reports both |
+| **Public deployed URL** | ✅ | **Live at `https://actuo.programmersingh.dev`**, with `https://actuo.onrender.com` kept as an alias that 308s to it. `server.mjs` composes Nest under `/api` with the Angular SSR handler from a committed `Dockerfile`; Firebase App Hosting was abandoned after three distinct buildpack failures against this workspace monorepo (see README *Why a Dockerfile*). Attaching the custom domain broke it in the documented way — every page 400'd on the new host until it was added to `NG_ALLOWED_HOSTS` — and in one that was **not** caught by any check: the SEO stamp is baked at build time, so the new domain served a sitemap, `canonical` and `og:image` all naming the old origin. `verify:deploy` now asserts the stamped origin matches the URL it is checking |
 | README | ✅ | Root `README.md`: what is WebMCP-specific and where, the flag setup, what works without it, and the deploy steps. Workspace READMEs are still starter boilerplate |
-| Demo video | ⬜ | The script is the "What to look at" list in `README.md`. Worth filming only after the SSR fix lands, or it records the client-rendered site |
+| Demo video | ⬜ | The last box left. The script is the "What to look at" list in `README.md`, and the SSR fix it was waiting on has landed — the deployed site server-renders, so a recording made now records the real thing |
 | Source with clear tool definitions | ✅ | `shared/src/tools.ts` |
 
 ---
 
 ## What to fix next
 
-Every Phase 0 row is green as of 2026-09-03. The deploy exists and is healthy;
-what is left is making it *correct*, the video, and Phase 1–3 features.
+Every Phase 0 row is green, real FX landed on 2026-09-03, the deploy is live on
+its own domain, and cross-origin is proven from that deploy. What is left is the
+rest of Phase 1, and the video.
 
-1. **Make the live deploy correct.** It exists and is healthy at
-   `https://actuo.onrender.com`, but `/` is client-rendered and was shipping an
-   unstamped `__PUBLIC_ORIGIN__`. Two things remain, both on the Render service
-   rather than in this repo: set **`NG_ALLOWED_HOSTS`** so Angular stops falling
-   back to CSR, and set **`CONVERTER_URL`** so the cross-origin path runs. Then
-   redeploy — `PUBLIC_ORIGIN` is a build arg, so a restart cannot carry the stamp
-   fix. If the service was created by hand rather than from `render.yaml`, its
-   `envVars` were never applied, which would explain all of it.
-   *Verify:* `pnpm run verify:deploy https://actuo.onrender.com` passes every
-   check.
-2. **Demo video** — the last §12 checkbox. The script is the "What to look at"
+1. **Budgets depth** — three open §6.3 rows, one surface. `POST /budgets`
+   inserts and there is no PATCH, so a budget can be set once and not changed;
+   the form hides categories that already have one rather than offering a
+   guaranteed 409. Threshold alerts (80%) and rollover-vs-reset are the other
+   two, and `budgets.spec.ts` already guards the rollover checkbox against
+   returning without its behaviour.
+2. **`/api/analytics/*`** — no controller; the dashboard derives everything
+   client-side. Standalone spend-by-category and a month-over-month delta tile
+   are the visible half.
+3. **Recurring expenses** — `recurring_templates` is in PRD §8.7 and **absent
+   from the migrations**, so it needs `0004`.
+4. **Org invites** — the last Phase 1 row, and the only one needing an external
+   service (Resend, plus a `sync: false` secret in `render.yaml`).
+5. **Demo video** — the last §12 checkbox. The script is the "What to look at"
    list in `README.md`.
-3. **Real FX** — live rates, a daily cache, a historical lock at write time.
-   Totals are honest about the gap now, but they still exclude real spend.
-4. **Editing an existing budget** — `POST /budgets` inserts and there is no
-   PATCH, so a budget can be set once and not changed. The form hides categories
-   that already have one rather than offering a guaranteed 409.
-5. **Everything else is Phase 1–3**: receipt OCR, notifications, recurring
-   templates (the table is not in the migration), multi-step approval chains,
-   comment threads, teams, tags, CSV import, PDF export, session management,
-   org invite/switch, `/api/analytics/*`, and packaging the Copilot as a
-   standalone script.
+6. **Everything else is Phase 2–3**: receipt OCR, notifications, multi-step
+   approval chains, comment threads, teams, tags, CSV import, PDF export,
+   session management, and packaging the Copilot as a standalone script.
 
 ### Known rough edges, deliberately not fixed here
 
-- **The cross-origin path has not been run end to end from a *deployed* Actuo.**
-  It is verified locally against the deployed converter (see §6.8), but nobody
-  has yet loaded Actuo on Render, framed the converter from there, and watched
-  the Copilot call `convertCurrency` across two public origins. Two things remain:
-  the converter commits have to reach the deploy, and `CONVERTER_URL` has to be
-  set on the service. The converter's own `exposedTo` change is already merged
-  and live. Until then `/api/config` reports no converter and the surfaces show
-  the honest "not configured" state, which is correct but is not the demo.
-- **CI has never run on GitHub.** The workflow was verified by running its exact
-  command sequence locally; `act` is not installed on this machine.
 - **The Firebase App Hosting backend may still be connected** with auto-rollouts,
   in which case it fails on every push. Deleting it is
   `firebase apphosting:backends:delete actuo --project actuo-2f1f3`. App Hosting
@@ -347,7 +339,8 @@ what is left is making it *correct*, the video, and Phase 1–3 features.
 - **No CSP header is set anywhere yet.** When one lands it will need `frame-src`
   for the converter origin (`CONVERTER_URL`) — one origin now, not two — or
   every converter surface breaks silently: an iframe blocked by CSP renders
-  empty with no error the page can see.
+  empty with no error the page can see. It also has to be written against the
+  *canonical* host, since that is the only origin that serves pages now.
 - **Brand assets are generated, not designed.** `scripts/generate-brand-assets.mjs`
   produces the icons and og card from the palette with ImageMagick. They are
   clean but plain, and regenerating after a palette change is manual.
