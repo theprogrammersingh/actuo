@@ -10,7 +10,7 @@
  *
  * So this serves `frontend/public` on :4201, which puts the page at
  * `/partner-demo/` there just as it is on the app's own origin — one URL shape
- * in dev and in production, so `PARTNER_DEMO_ORIGIN` is the only thing that
+ * in dev and in production, so `CONVERTER_URL` is the only thing that
  * changes between them. Deliberately dependency-free
  * (`node:http` + `node:fs`): a static file server is not worth a package, and
  * pnpm blocks lifecycle scripts by default, so every added dependency is a new

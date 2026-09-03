@@ -242,9 +242,36 @@ there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which 
 exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
 dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
 `/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
-third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
-by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
-app's own origin, `/agent` says so instead of showing an empty list.
+third pane.
+
+What the app frames is **`CONVERTER_URL`**, served to the browser by
+`GET /api/config` — so a deploy changes it without a rebuild. It replaced
+`PARTNER_DEMO_ORIGIN`, and it is a **full URL rather than a bare origin** because
+the two things it points at disagree on the path: the production converter serves
+at `/`, the local partner demo at `/partner-demo/`. Consumers derive the origin
+with `new URL(value).origin`; a second "path" variable that had to stay in step
+would be one too many. Non-http(s) values are rejected before the sanitizer
+bypass. When it equals the app's own origin, every surface says so instead of
+showing an empty list.
+
+**The `?actuo=` handshake is what makes any of it work.** A WebMCP tool is
+visible only to its own document unless registration names an origin in
+`exposedTo`, so the framed page has to be *told* which origin to expose to.
+`ConverterSession.frameUrl` appends `?actuo=<our origin>`, and both
+`frontend/public/partner-demo/index.html` and the production converter read it.
+Sending it at runtime rather than hardcoding our hostname there means a deploy
+URL can change without a release on the other side.
+
+**`ConverterSession` owns the discovery lifecycle, not any page.** It used to
+belong to `/agent`, which was fine while one page framed one partner. With four
+surfaces, page-owned teardown cleared the Copilot's remote tools while a frame
+was still mounted elsewhere. Two rules live there now: **only one frame at a
+time** (`getTools()` returns a descriptor per *window*, so two live frames
+publish two tools called `convertCurrency`), and **reference-counted discovery**
+(during a route change Angular builds the incoming component before destroying
+the outgoing one, so clear-on-destroy would wipe what the new surface just
+found). `Copilot.discoverRemoteTools()` also dedupes by name now, which fixes
+the same duplicate-window bug for the partner page.
 
 ## The deploy
 
@@ -460,6 +487,24 @@ The earlier code fell back to the raw `amount`, on the reasoning that a slightly
 wrong number beat a bar reading zero. It was not slightly wrong: a $200 charge
 was counted as ₹200. When a real FX pass starts filling `converted_amount`,
 those rows re-enter every total with no code change.
+
+**The embedded converter does not change this, and must not.** `converter/`
+frames a separate converter app on four surfaces (`/convert`, `/agent`, the
+dashboard's excluded-rows notice, and expense rows in another currency). It is
+advisory: a rate a person reads off another site is not the historical rate
+locked at entry, so nothing it shows may reach `converted_amount`, `sumSpend()`,
+`sumByCategory()`, or the `excludedNotice()` copy.
+
+That is enforced structurally rather than by good intentions:
+`CurrencyConverter` has **no `output()`, no `postMessage` listener, and never
+reads a value back out of the frame**, so no converted figure exists anywhere in
+Actuo's component tree to be wired in. Adding one would mean first inventing a
+return channel — a visible, reviewable act rather than a one-line slip.
+`currency-converter.spec.ts` asserts the component's inputs and outputs
+directly, and the dashboard and expenses specs assert that opening the lookup
+moves no figure. **`core/expense/amount.ts` and its spec were not touched by
+that work**; if a change to the converter needs to edit them, the change is
+wrong.
 
 ## Architectural rules that must not be violated
 

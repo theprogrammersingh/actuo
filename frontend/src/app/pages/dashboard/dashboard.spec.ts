@@ -84,11 +84,19 @@ describe('Dashboard', () => {
   const findAll = (selector: string) => Array.from(host().querySelectorAll(selector));
 
   /** Routes each parallel call by path, so ordering inside Promise.all cannot matter. */
-  function respond(overrides: { expenses?: Expense[]; budgets?: BudgetStatus[] } = {}) {
+  function respond(
+    overrides: {
+      expenses?: Expense[];
+      budgets?: BudgetStatus[];
+      /** Absent means no converter is configured, which is the deployed default. */
+      converterUrl?: string;
+    } = {},
+  ) {
     return (path: string) => {
       if (path === '/expenses') return Promise.resolve(page(overrides.expenses ?? EXPENSES));
       if (path === '/budgets/status') return Promise.resolve(overrides.budgets ?? BUDGETS);
       if (path === '/orgs/current') return Promise.resolve(ORG);
+      if (path === '/config') return Promise.resolve({ converterUrl: overrides.converterUrl ?? '' });
       return Promise.reject(new Error(`unexpected path ${path}`));
     };
   }
@@ -254,6 +262,65 @@ describe('Dashboard', () => {
       await settle();
 
       expect(text()).not.toContain('in other currencies');
+    });
+
+    /**
+     * The trigger sits beside the exclusion notice because that is where the
+     * question forms — but a converter cannot make an excluded row count, and
+     * "Convert currencies" next to "2 expenses aren't included" would read as
+     * "click here to include them". The copy has to carry that, so it is
+     * asserted rather than left to drift.
+     */
+    describe('the rate lookup beside it', () => {
+      it('offers a lookup that says it will not change the total', async () => {
+        api.get.mockImplementation(
+          respond({ expenses: MIXED, converterUrl: 'https://cambiaro.example/' }),
+        );
+        await create();
+        await settle();
+        await settle();
+
+        expect(text()).toContain("this won't change the total");
+      });
+
+      it('is not offered when no converter is configured', async () => {
+        api.get.mockImplementation(respond({ expenses: MIXED }));
+        await create();
+        await settle();
+
+        expect(text()).not.toContain("this won't change the total");
+        // The notice itself is unaffected either way.
+        expect(text()).toContain('2 expenses in other currencies');
+      });
+
+      /**
+       * LOAD-BEARING. Opening the lookup must not move a figure on this page.
+       * See CLAUDE.md, "Money: never add two currencies".
+       */
+      it('leaves the total and the notice exactly as they were', async () => {
+        api.get.mockImplementation(
+          respond({ expenses: MIXED, converterUrl: 'https://cambiaro.example/' }),
+        );
+        await create();
+        await settle();
+        await settle();
+
+        const tileOf = () =>
+          findAll('ui-stat-card')
+            .find((card) => card.textContent?.includes('This month'))
+            ?.textContent?.trim();
+        const before = tileOf();
+
+        const trigger = findAll('button').find((b) =>
+          (b.textContent ?? '').includes("won't change the total"),
+        ) as HTMLButtonElement | undefined;
+        expect(trigger).toBeDefined();
+        trigger!.click();
+        await settle();
+
+        expect(tileOf()).toBe(before);
+        expect(text()).toContain('2 expenses in other currencies');
+      });
     });
 
     it('prints an unconverted row under its own currency in the activity feed', async () => {

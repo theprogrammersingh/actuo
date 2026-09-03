@@ -2,23 +2,18 @@ import { isPlatformBrowser } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
-  DestroyRef,
+  OnInit,
   PLATFORM_ID,
   computed,
   inject,
-  signal,
 } from '@angular/core';
-import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
+import { RouterLink } from '@angular/router';
 
-import { ApiClient } from '../../core/api/api-client.js';
 import { Badge, Button, Card, EmptyState } from '../../ui';
 import { Copilot } from '../../copilot/copilot.js';
+import { CurrencyConverter } from '../../converter/currency-converter.js';
+import { ConverterSession } from '../../converter/converter-session.js';
 import { ToolRegistry } from '../../webmcp/tool-registry.js';
-
-/** The subset of `GET /api/config` this screen needs. */
-interface AgentConfig {
-  partnerOrigin: string;
-}
 
 /**
  * Agent tools — the WebMCP surface, made visible (PRD §7).
@@ -29,9 +24,14 @@ interface AgentConfig {
  *  1. **Cross-origin tool use.** `Copilot.discoverRemoteTools()` was never
  *     called, and the partner page was served from Actuo's own origin — so even
  *     if it had been, every descriptor would have come back same-origin and been
- *     filtered out. This screen embeds the partner page from its own origin
- *     (`PARTNER_DEMO_ORIGIN`, :4201 in dev) with `allow="tools"`, then asks
- *     `getTools({fromOrigins})` for what it exposes.
+ *     filtered out. This screen embeds the currency converter from its own
+ *     origin (`CONVERTER_URL`, the local partner page on :4201 in dev) with
+ *     `allow="tools"`, then asks `getTools({fromOrigins})` for what it exposes.
+ *
+ *     The frame and the discovery lifecycle belong to `ConverterSession`, not to
+ *     this page: the converter also appears on `/convert`, the dashboard and
+ *     foreign-currency expense rows, and page-owned teardown would clear the
+ *     Copilot's remote tools while a frame was still mounted somewhere else.
  *  2. **The manual debug panel.** `ToolRegistry.discoveredTools()` and
  *     `invocationLog()` had no consumer. They are the two panels below, and
  *     they are what makes "the agent did exactly this" inspectable rather than
@@ -47,7 +47,7 @@ interface AgentConfig {
 @Component({
   selector: 'app-agent',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Badge, Button, Card, EmptyState],
+  imports: [Badge, Button, Card, CurrencyConverter, EmptyState, RouterLink],
   host: { class: 'block' },
   template: `
     <section class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
@@ -116,9 +116,10 @@ interface AgentConfig {
             <div>
               <h2 class="font-display text-lg font-semibold text-body">Another site's tools</h2>
               <p class="mt-1 text-sm text-muted">
-                Pageturner Books is an unrelated page that knows nothing about Actuo. It
-                registers its own tools and exposes them to this origin, and the Copilot picks
-                them up — the same widget, driving a site it was not built for.
+                The currency converter below is a separate app on its own origin that knows
+                nothing about Actuo. It registers its own tools, exposes them to this origin,
+                and the Copilot picks them up — the same widget, driving a site it was not
+                built for.
               </p>
             </div>
             <button uiButton variant="secondary" size="sm" (click)="rediscover()">
@@ -127,62 +128,31 @@ interface AgentConfig {
           </div>
         </header>
 
-        @if (!partnerOrigin()) {
-          <!--
-            The deployed default. Rather than an empty card, say what is missing
-            and what the page still offers: the partner demo itself works from
-            this origin, it just cannot prove anything about *cross*-origin.
-          -->
-          <p class="text-sm text-muted">
-            No second origin is configured, so there is nothing cross-origin to discover. The
-            partner page itself is still here —
-            <a
-              href="/partner-demo/"
-              class="underline decoration-line underline-offset-2 hover:text-body"
-              target="_blank"
-              rel="noreferrer"
-              >open it on this origin</a
-            >
-            — but its tools come back same-origin, which is the set the Copilot filters out.
-          </p>
-          <p class="mt-2 text-sm text-muted">
-            To run the real demo, point <code class="font-mono">PARTNER_DEMO_ORIGIN</code> at a
-            host that is not this one. Locally that is
-            <code class="font-mono">pnpm run dev:partner</code> on :4201.
-          </p>
-        } @else if (sameOrigin()) {
-          <!--
-            Worth saying plainly rather than showing a confident empty list: with
-            the partner page on this origin its tools come back marked
-            same-origin, the Copilot filters them out, and nothing here would be
-            cross-origin in any meaningful sense.
-          -->
-          <p class="text-sm text-muted">
-            The partner page is configured on this app's own origin, so nothing it exposes is
-            cross-origin. Set <code class="font-mono">PARTNER_DEMO_ORIGIN</code> to a different
-            host — locally that is <code class="font-mono">pnpm run dev:partner</code> on
-            :4201.
-          </p>
-        } @else if (partnerUrl(); as url) {
-          <p class="mb-3 text-xs text-muted">
-            Embedded from <span class="font-mono text-body">{{ partnerHost() }}</span> with
-            <code class="font-mono">allow="tools"</code>.
-          </p>
+        <app-currency-converter
+          [surface]="surface"
+          title="Currency converter — cross-origin WebMCP demo"
+        />
 
-          <iframe
-            title="Pageturner Books — WebMCP partner demo"
-            class="h-64 w-full rounded-lg border border-line bg-canvas"
-            allow="tools"
-            referrerpolicy="no-referrer"
-            [src]="url"
-            (load)="rediscover()"
-          ></iframe>
+        <p class="mt-3 text-xs text-muted">
+          The same converter has
+          <a
+            routerLink="/convert"
+            class="underline decoration-line underline-offset-2 hover:text-body"
+            >a page of its own</a
+          >, and appears on expense rows filed in another currency.
+        </p>
 
+        @if (session.isAvailable()) {
           @if (remoteTools().length === 0) {
             <p class="mt-3 text-sm text-muted">
               No tools discovered from that origin yet.
               @if (!registry.canExecuteCrossOrigin()) {
                 Cross-origin discovery needs the Chrome flag above.
+              } @else {
+                A site's tools are same-origin unless it registers them with
+                <code class="font-mono">exposedTo</code> naming this origin — the converter is
+                told which origin that is by the
+                <code class="font-mono">?actuo=</code> parameter on the frame above.
               }
             </p>
           } @else {
@@ -203,8 +173,8 @@ interface AgentConfig {
               }
             </ul>
             <p class="mt-3 text-sm text-muted">
-              The Copilot can use these now — ask it what
-              <em>The Overstory</em> costs.
+              The Copilot can use these now — ask it what €80 is in rupees. The answer is that
+              site's, quoted with its rate and date; it never becomes an Actuo figure.
             </p>
           }
         }
@@ -255,17 +225,15 @@ interface AgentConfig {
     </section>
   `,
 })
-export class Agent {
-  private readonly api = inject(ApiClient);
-  private readonly sanitizer = inject(DomSanitizer);
-  private readonly copilot = inject(Copilot);
+export class Agent implements OnInit {
   private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+  private readonly copilot = inject(Copilot);
 
   protected readonly registry = inject(ToolRegistry);
-  private readonly destroyRef = inject(DestroyRef);
+  protected readonly session = inject(ConverterSession);
 
-  /** `null` until `/api/config` answers; `''` there means no second origin. */
-  protected readonly partnerOrigin = signal<string | null>(null);
+  /** The surface id this page claims. See `ConverterSession.open`. */
+  protected readonly surface = 'agent';
 
   protected readonly remoteTools = this.copilot.crossOriginTools;
   protected readonly registeredNames = computed(() => this.registry.registeredNames().join(', '));
@@ -273,51 +241,25 @@ export class Agent {
   /** Newest first — the call you just made is the one you are looking for. */
   protected readonly invocations = computed(() => [...this.registry.invocationLog()].reverse());
 
-  protected readonly sameOrigin = computed(() => {
-    const origin = this.partnerOrigin();
-    return origin !== null && origin === this.selfOrigin();
-  });
+  protected readonly converterHost = computed(() => hostOf(this.session.converterOrigin()));
 
-  protected readonly partnerHost = computed(() => hostOf(this.partnerOrigin() ?? ''));
-
-  /**
-   * `[src]` on an iframe is a RESOURCE_URL context, so Angular refuses an
-   * interpolated string outright. Bypassing is the deliberate call here: the
-   * origin comes from our own `GET /api/config`, never from user input or
-   * anything an agent can influence, and the `?actuo=` value is this document's
-   * own origin. If that ever becomes user-supplied, this must stop being a
-   * bypass.
-   */
-  protected readonly partnerUrl = computed<SafeResourceUrl | null>(() => {
-    const origin = this.partnerOrigin();
-    if (!origin || this.sameOrigin()) return null;
-    const url = `${origin}/partner-demo/?actuo=${encodeURIComponent(this.selfOrigin())}`;
-    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
-  });
-
-  constructor() {
+  ngOnInit(): void {
     if (!this.isBrowser) return;
-
-    void this.loadConfig();
-
     /*
-     * Re-discover on `toolchange`. The partner page registers its tools
-     * asynchronously after its own load, so the iframe's `load` event can fire
-     * before there is anything to find; this is what catches the second beat.
+     * This page's job is to make the cross-origin surface visible, so it opens
+     * the frame rather than offering a trigger. `ConverterSession` owns the
+     * discovery lifecycle from here — including the `toolchange` subscription
+     * and the teardown that used to live in this constructor. It has to, now
+     * that the converter also appears on the dashboard and on expense rows:
+     * page-owned teardown would clear the Copilot's tools while a frame was
+     * still mounted and visible somewhere else.
      */
-    const stop = this.registry.onToolChange(() => void this.rediscover());
-    this.destroyRef.onDestroy(() => {
-      stop();
-      // The iframe is about to be torn down. Leaving its tools on the Copilot's
-      // menu means the model keeps trying to call a document that is gone.
-      this.copilot.clearRemoteTools();
-    });
+    this.session.open(this.surface);
   }
 
-  protected async rediscover(): Promise<void> {
-    const origin = this.partnerOrigin();
-    if (!origin || this.sameOrigin()) return;
-    await this.copilot.discoverRemoteTools([origin]);
+  /** The Rediscover button. */
+  protected rediscover(): void {
+    void this.session.rediscover();
   }
 
   protected hostOf(origin: string): string {
@@ -337,28 +279,6 @@ export class Agent {
     return text.length > 160 ? `${text.slice(0, 159)}…` : text;
   }
 
-  private selfOrigin(): string {
-    return this.isBrowser ? globalThis.location.origin : '';
-  }
-
-  private async loadConfig(): Promise<void> {
-    try {
-      const config = await this.api.get<AgentConfig>('/config');
-      if (typeof config?.partnerOrigin === 'string' && config.partnerOrigin) {
-        this.partnerOrigin.set(config.partnerOrigin.replace(/\/+$/, ''));
-        /*
-         * Discover straight away rather than waiting for the iframe's `load`
-         * or a `toolchange`. The partner page may already be open in another
-         * tab, in which case its tools are exposed to this origin right now
-         * and neither of those events will ever fire.
-         */
-        await this.rediscover();
-      }
-    } catch {
-      // No partner origin configured or the backend is down: the section stays
-      // empty rather than the page failing. Nothing else here depends on it.
-    }
-  }
 }
 
 function hostOf(origin: string): string {

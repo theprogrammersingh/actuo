@@ -76,24 +76,28 @@ export class EnvService {
   }
 
   /**
-   * Where the WebMCP partner-demo page is served from (PRD §7 cross-origin row),
-   * or `''` when no second origin is configured.
+   * Base URL of the embedded currency converter (PRD §6.5, §7 cross-origin row),
+   * or `''` when none is configured.
    *
-   * It has to be a *different* origin than the app or the demo proves nothing:
-   * `getTools({fromOrigins})` would return same-origin tools and the Copilot
-   * would filter every one of them out. Locally that is the static server on
-   * :4201 (`pnpm run dev:partner`); on a deploy it is whatever host the page
-   * ends up on, which is why this is configuration and not a constant.
+   * A full URL rather than a bare origin, because the two things this points at
+   * do not live at the same path: Cambiaro serves at `/`, and the local
+   * partner-demo fallback at `/partner-demo/`. Callers derive the origin for
+   * `getTools({fromOrigins})` with `new URL(value).origin`, so one value covers
+   * both without a second "path" variable to keep in step.
+   *
+   * It has to be a *different* origin than the app or the cross-origin demo
+   * proves nothing: `getTools()` would return same-origin tools and the Copilot
+   * filters every one of them out.
    *
    * The localhost default is **development only**. Serving it from a deployed
-   * instance would make `/agent` embed an iframe pointing at each visitor's own
-   * machine — a broken frame on the one page whose job is to demonstrate
-   * cross-origin tools. Unset in production, `/agent` says it has no second
-   * origin, which is true and useful.
+   * instance would embed an iframe pointing at each visitor's own machine — a
+   * broken frame on the surfaces whose job is to demonstrate cross-origin
+   * tools. Unset in production, those surfaces say so, which is true and
+   * useful.
    */
-  get partnerOrigin(): string {
-    const configured = this.optional('PARTNER_DEMO_ORIGIN');
+  get converterUrl(): string {
+    const configured = this.optional('CONVERTER_URL');
     if (configured) return configured;
-    return process.env['NODE_ENV'] === 'production' ? '' : 'http://localhost:4201';
+    return process.env['NODE_ENV'] === 'production' ? '' : 'http://localhost:4201/partner-demo/';
   }
 }

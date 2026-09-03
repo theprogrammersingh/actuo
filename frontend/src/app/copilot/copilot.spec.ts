@@ -268,6 +268,61 @@ describe('Copilot', () => {
 
       expect(copilot.crossOriginTools()).toEqual([]);
     });
+
+    /**
+     * `getTools()` returns a descriptor per *window*, not per tool. The same
+     * page framed here and also open in another tab publishes the same tool
+     * twice, and nothing in the app can stop a user opening that tab.
+     *
+     * Left alone, `toolDeclarations()` hands Gemini two function declarations
+     * with the same name — which is a malformed request, not a redundant one —
+     * while `runTool()` resolves the call with `.find()` and picks whichever
+     * arrived first anyway.
+     */
+    it('publishes one declaration per name when a page is open twice', async () => {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [
+          { provide: GeminiClient, useValue: scriptedGemini() },
+          { provide: KeyStore, useValue: { hasKey: () => true } },
+          { provide: ApiClient, useValue: { get: vi.fn(), post: vi.fn() } },
+          {
+            provide: DOCUMENT,
+            useValue: {
+              location: { origin: 'https://actuo.app' },
+              modelContext: Object.assign(new EventTarget(), {
+                registerTool: vi.fn().mockResolvedValue(undefined),
+                getTools: vi.fn().mockResolvedValue([
+                  {
+                    name: 'convertCurrency',
+                    title: 'Convert currency',
+                    description: 'From the framed window.',
+                    inputSchema: { type: 'object', properties: {} },
+                    origin: 'https://cambiaro.example',
+                    annotations: { readOnlyHint: true },
+                  },
+                  {
+                    name: 'convertCurrency',
+                    title: 'Convert currency',
+                    description: 'From the same page in another tab.',
+                    inputSchema: { type: 'object', properties: {} },
+                    origin: 'https://cambiaro.example',
+                    annotations: { readOnlyHint: true },
+                  },
+                ]),
+              }),
+            },
+          },
+        ],
+      });
+      const copilot = TestBed.inject(Copilot);
+      await copilot.discoverRemoteTools(['https://cambiaro.example']);
+
+      const tools = copilot.crossOriginTools();
+      expect(tools).toHaveLength(1);
+      // First wins is fine; sending both is not.
+      expect(tools[0].description).toContain('framed window');
+    });
   });
 
   it('clears the conversation on reset', async () => {

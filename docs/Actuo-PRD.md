@@ -107,6 +107,8 @@ One codebase, one deployable unit:
 - Store amounts in original currency + converted base-currency value
 - Live FX rate fetch (cached daily) via a public FX API
 - Historical rate lock at time of entry
+- **Embedded currency converter (advisory):** a separate converter app is framed on `/convert`, on `/agent`, beside the dashboard's excluded-rows notice, and on expense rows filed in another currency. It is a *reference*, not a rate source — nothing it shows is written to `converted_amount`, folded into a total, or allowed to change the excluded-rows copy. Until the FX pass above exists, a total that says what it left out stays the honest answer; a rate looked up today is not the historical rate locked at entry.
+- The converter is a genuinely separate origin exposing its own WebMCP tools, so it is also how §7's cross-origin row is satisfied on a real deploy (see §6.8).
 
 ### 6.6 Analytics & Forecasting
 - Dashboard: spend by category/time, team vs. individual breakdown
@@ -146,7 +148,7 @@ This table is the actual "learning checklist" — every row must have a concrete
 | **JSON Schema inputs** | Every tool above has a strict schema (enums for category/currency, required fields) |
 | **Dynamic/state-gated tools** | `approve_expense` tool only registered when the logged-in user has `admin`/`owner` role AND there's a pending item; listens to `toolchange` |
 | **Cancellation (`AbortSignal`)** | `generate_report` (long-running export) supports cancel mid-execution |
-| **Cross-origin tools** | Copilot widget embedded via iframe on a second, unrelated site (`exposedTo` / `fromOrigins` / `allow="tools"`) |
+| **Cross-origin tools** | Copilot widget embedded via iframe on a second, unrelated site (`exposedTo` / `fromOrigins` / `allow="tools"`) — served in production by an independently deployed currency converter, not a page this repo authored |
 | **Security annotations** | `readOnlyHint` on read tools (`search_expenses`), `untrustedContentHint` / confirmation dialog on mutating tools |
 | **Tool discovery (`getTools`)** | Core of the Copilot widget itself |
 | **`executeTool()` + manual invocation** | Copilot's execution engine; also a debug panel for manually testing tools while developing |
@@ -295,7 +297,7 @@ tool_call_log    (id, org_id, actor ('human'|'agent'), tool_name, input, output,
 
 ### Phase 1 — Depth
 - Approval workflows + roles + state-gated `approve_expense` tool
-- Multi-currency + FX
+- Multi-currency + FX — the embedded converter (§6.5) is advisory only and does **not** close this; the open work is live rates, a daily cache, and a historical rate lock at write time, all server-side
 - Recurring expenses
 - Analytics dashboard + forecasting
 

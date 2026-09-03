@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
+import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClient } from '../../core/api/api-client.js';
@@ -10,6 +11,8 @@ import type { ToolInvocation } from '../../webmcp/tool-registry.js';
 import { Agent } from './agent.js';
 
 const SELF_ORIGIN = globalThis.location.origin;
+/** CONVERTER_URL carries a path, so the origin is derived from it. */
+const CONVERTER_URL = 'http://localhost:4201/partner-demo/';
 const PARTNER = 'http://localhost:4201';
 
 function remoteTool(overrides: Partial<NormalizedTool> = {}): NormalizedTool {
@@ -59,17 +62,20 @@ describe('Agent tools page', () => {
   const text = () => host().textContent ?? '';
   const iframe = () => host().querySelector('iframe');
 
-  /** `null` means "the backend reported no partner origin", not "use the default". */
-  async function create(partnerOrigin: string | null = PARTNER): Promise<void> {
+  /** `null` means "the backend reported no converter", not "use the default". */
+  async function create(converterUrl: string | null = CONVERTER_URL): Promise<void> {
     api.get.mockImplementation((path: string) =>
       path === '/config'
-        ? Promise.resolve(partnerOrigin === null ? {} : { partnerOrigin })
+        ? Promise.resolve(converterUrl === null ? {} : { converterUrl })
         : Promise.reject(new Error(`unexpected ${path}`)),
     );
 
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
+        // The page links to /convert, so RouterLink needs a router to resolve
+        // against. No routes are exercised here; the link just has to render.
+        provideRouter([]),
         { provide: ApiClient, useValue: api },
         { provide: Copilot, useValue: copilot },
         { provide: ToolRegistry, useValue: registry },
@@ -114,10 +120,11 @@ describe('Agent tools page', () => {
       const frame = iframe();
       expect(frame).not.toBeNull();
       expect(frame!.getAttribute('allow')).toBe('tools');
-      expect(frame!.getAttribute('src')).toContain(`${PARTNER}/partner-demo/`);
+      expect(frame!.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect(frame!.getAttribute('src')).toContain(CONVERTER_URL);
     });
 
-    it('tells the partner page which origin to expose its tools to', async () => {
+    it('tells the embedded page which origin to expose its tools to', async () => {
       await create();
       expect(iframe()!.getAttribute('src')).toContain(
         `actuo=${encodeURIComponent(SELF_ORIGIN)}`,
@@ -151,29 +158,38 @@ describe('Agent tools page', () => {
      * the Copilot filters every one of them out. Showing an empty list would
      * read as a bug; saying so is the honest failure.
      */
-    it('explains itself instead of pretending, when the partner is same-origin', async () => {
-      await create(SELF_ORIGIN);
+    it('explains itself instead of pretending, when the converter is same-origin', async () => {
+      await create(`${SELF_ORIGIN}/partner-demo/`);
 
       expect(iframe()).toBeNull();
-      expect(text()).toContain('PARTNER_DEMO_ORIGIN');
+      expect(text()).toContain('CONVERTER_URL');
       expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
     });
 
     /**
-     * The deployed default: `PARTNER_DEMO_ORIGIN` is unset in production, on
-     * purpose, because a localhost fallback there would embed an iframe
-     * pointing at each visitor's own machine. An empty card would read as a
-     * bug, so the page has to say what is missing.
+     * The deployed default: `CONVERTER_URL` is unset in production, on purpose,
+     * because a localhost fallback there would embed an iframe pointing at each
+     * visitor's own machine. An empty card would read as a bug, so the page has
+     * to say what is missing.
      */
-    it('explains itself when no partner origin is configured', async () => {
+    it('explains itself when no converter is configured', async () => {
       await create(null);
 
       expect(iframe()).toBeNull();
       expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
-      expect(text()).toContain('No second origin is configured');
-      // Still points at what does exist, and at how to get the real demo.
-      expect(host().querySelector('a[href="/partner-demo/"]')).not.toBeNull();
-      expect(text()).toContain('PARTNER_DEMO_ORIGIN');
+      expect(text()).toContain('No converter is configured');
+      expect(text()).toContain('CONVERTER_URL');
+    });
+
+    /**
+     * A misconfigured variable must not become a `javascript:` frame src. The
+     * scheme check lives in ConverterSession, ahead of the sanitizer bypass.
+     */
+    it('refuses a converter URL that is not http(s)', async () => {
+      await create('javascript:alert(1)');
+
+      expect(iframe()).toBeNull();
+      expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
     });
 
     /**

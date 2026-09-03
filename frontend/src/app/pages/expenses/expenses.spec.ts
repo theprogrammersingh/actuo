@@ -193,6 +193,84 @@ describe('Expenses', () => {
       expect(text()).not.toContain('₹');
     });
 
+    /**
+     * The rate lookup is offered on exactly the rows the totals leave out —
+     * `isConverted()` is the same predicate `sumSpend()` excludes on — so the
+     * trigger appears where the question forms and nowhere else.
+     */
+    describe('the rate lookup', () => {
+      function withConverter(rows: Expense[]): void {
+        api.get.mockImplementation((path: string) =>
+          path === '/config'
+            ? Promise.resolve({ converterUrl: 'https://cambiaro.example/' })
+            : Promise.resolve(page(rows)),
+        );
+        create();
+      }
+
+      it('is offered on a row in another currency', async () => {
+        withConverter([
+          expense({ id: 'usd', merchant: 'AWS', amount: 50, currency: 'USD', convertedAmount: null }),
+        ]);
+        await settle();
+        await settle();
+
+        expect(text()).toContain('What is this in INR?');
+      });
+
+      it('is not offered on a base-currency row', async () => {
+        withConverter([expense({ id: 'inr', merchant: 'Barista', amount: 250 })]);
+        await settle();
+        await settle();
+
+        expect(text()).not.toContain('What is this in');
+      });
+
+      it('is not offered on a row that already has a converted value', async () => {
+        withConverter([
+          expense({
+            id: 'usd',
+            merchant: 'AWS',
+            amount: 50,
+            currency: 'USD',
+            convertedAmount: 4200,
+          }),
+        ]);
+        await settle();
+        await settle();
+
+        expect(text()).not.toContain('What is this in');
+      });
+
+      /**
+       * LOAD-BEARING. Opening the lookup must not change what the row says it
+       * cost. The converter is advisory: a rate read off another site is not
+       * the locked historical rate `converted_amount` would hold, so the money
+       * on screen is the money that was filed. See CLAUDE.md, "Money: never add
+       * two currencies".
+       */
+      it('does not change the amount on the row it is opened from', async () => {
+        withConverter([
+          expense({ id: 'usd', merchant: 'AWS', amount: 50, currency: 'USD', convertedAmount: null }),
+        ]);
+        await settle();
+        await settle();
+
+        const before = find('[data-money]')?.textContent?.trim();
+        expect(before).toContain('$');
+
+        const trigger = findAll('button').find((b) =>
+          (b.textContent ?? '').includes('What is this in'),
+        ) as HTMLButtonElement | undefined;
+        expect(trigger).toBeDefined();
+        trigger!.click();
+        await settle();
+
+        expect(find('[data-money]')?.textContent?.trim()).toBe(before);
+        expect(text()).not.toContain('₹');
+      });
+    });
+
     it('labels a converted row with the org base currency', async () => {
       api.get.mockResolvedValue(
         page([
@@ -382,6 +460,25 @@ describe('Expenses paging', () => {
     fixture.detectChanges();
   };
 
+  /**
+   * Queue page responses by PATH, not by call order.
+   *
+   * `mockResolvedValueOnce` is consumed by whichever request happens to fire
+   * first, and this screen also asks `/api/config` (to decide whether to offer
+   * the per-row rate lookup). Routing by path is what keeps these assertions
+   * about paging rather than about request ordering — the dashboard spec makes
+   * the same move, for the same reason.
+   */
+  function queuePages(...responses: unknown[]): void {
+    const queue = [...responses];
+    api.get.mockImplementation((path: string) => {
+      if (path === '/config') return Promise.resolve({ converterUrl: '' });
+      const next = queue.shift();
+      if (next === undefined) return Promise.reject(new Error('no queued page'));
+      return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
+    });
+  }
+
   beforeEach(() => {
     api = { get: vi.fn() };
   });
@@ -405,15 +502,19 @@ describe('Expenses paging', () => {
 
   it('requests the next page by offset and appends the rows', async () => {
     const more: Expense[] = [{ ...ROWS[0], id: 'later-1', merchant: 'Later Cafe' }];
-    api.get.mockResolvedValueOnce(page(ROWS, ROWS.length + 1));
-    api.get.mockResolvedValueOnce({ items: more, total: ROWS.length + 1, limit: 100, offset: ROWS.length });
+    queuePages(page(ROWS, ROWS.length + 1), {
+      items: more,
+      total: ROWS.length + 1,
+      limit: 100,
+      offset: ROWS.length,
+    });
 
     create();
     await settle();
     loadMore()!.click();
     await settle();
 
-    expect(api.get).toHaveBeenLastCalledWith('/expenses/search', {
+    expect(api.get).toHaveBeenCalledWith('/expenses/search', {
       limit: 100,
       offset: ROWS.length,
     });
@@ -424,8 +525,12 @@ describe('Expenses paging', () => {
 
   it('hides Load more once every row is in', async () => {
     const more: Expense[] = [{ ...ROWS[0], id: 'later-1', merchant: 'Later Cafe' }];
-    api.get.mockResolvedValueOnce(page(ROWS, ROWS.length + 1));
-    api.get.mockResolvedValueOnce({ items: more, total: ROWS.length + 1, limit: 100, offset: ROWS.length });
+    queuePages(page(ROWS, ROWS.length + 1), {
+      items: more,
+      total: ROWS.length + 1,
+      limit: 100,
+      offset: ROWS.length,
+    });
 
     create();
     await settle();
@@ -440,8 +545,7 @@ describe('Expenses paging', () => {
    * a worse outcome than not paging at all.
    */
   it('keeps the loaded rows when a later page fails, and says so', async () => {
-    api.get.mockResolvedValueOnce(page(ROWS, 250));
-    api.get.mockRejectedValueOnce(new Error('Network unavailable'));
+    queuePages(page(ROWS, 250), new Error('Network unavailable'));
 
     create();
     await settle();
@@ -460,7 +564,9 @@ describe('Expenses paging', () => {
     loadMore()!.click();
     await settle();
 
-    for (const [, params] of api.get.mock.calls) {
+    const pageCalls = api.get.mock.calls.filter(([path]) => path !== '/config');
+    expect(pageCalls.length).toBeGreaterThan(0);
+    for (const [, params] of pageCalls) {
       expect((params as { limit: number }).limit).toBeLessThanOrEqual(EXPENSE_PAGE_MAX);
     }
   });

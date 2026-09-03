@@ -264,11 +264,26 @@ does not, `NG_ALLOWED_HOSTS` does not match your hostname.
 
 ### The cross-origin demo on a deployed URL
 
-The partner page ships inside the app, so on a deploy it is same-origin — which
-proves nothing about *cross*-origin tools, and `/agent` says exactly that rather
-than showing an empty list. To make the demo real on a public URL, host
-`frontend/public/partner-demo/` somewhere else and point `PARTNER_DEMO_ORIGIN` at
-it.
+`CONVERTER_URL` is the origin the app frames, and it has to be one the app does
+not serve: the bundled partner page at `frontend/public/partner-demo/` is
+same-origin on a deploy, which proves nothing about *cross*-origin tools, and
+every converter surface says exactly that rather than showing an empty list.
+
+In production it points at an independently deployed currency converter, which
+is a real second origin and also a real feature. Two things must both be true
+for the Copilot to reach its tools:
+
+1. `CONVERTER_URL` is set on the service (it is in `render.yaml`), and
+2. the converter registers its tools with `exposedTo` naming this app's origin.
+
+The second is the one that is easy to miss. A WebMCP tool is visible only to its
+own document unless registration opts in, so the framed page is *told* which
+origin to expose to via the `?actuo=` parameter the app appends. Until it
+honours that, the frame still works by hand and the tool list is honestly empty.
+
+Locally, `pnpm run dev` starts the partner page on :4201 and the default
+`CONVERTER_URL` already points there, so the cross-origin path works with no
+setup.
 
 ---
 

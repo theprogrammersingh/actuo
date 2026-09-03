@@ -1,4 +1,5 @@
 import { PLATFORM_ID, computed, signal } from '@angular/core';
+import { provideRouter } from '@angular/router';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import type {
   AuditLogEntry,
@@ -120,6 +121,9 @@ describe('Settings', () => {
     await TestBed.configureTestingModule({
       imports: [Settings],
       providers: [
+        // Settings links to /convert, so RouterLink needs a router to resolve
+        // against. No routes are exercised here; the link just has to render.
+        provideRouter([]),
         { provide: PLATFORM_ID, useValue: 'browser' },
         { provide: ApiClient, useValue: api as unknown as ApiClient },
         { provide: ModelCatalog, useValue: stubCatalog() as unknown as ModelCatalog },
@@ -321,6 +325,9 @@ describe('Settings', () => {
     await TestBed.configureTestingModule({
       imports: [Settings],
       providers: [
+        // Settings links to /convert, so RouterLink needs a router to resolve
+        // against. No routes are exercised here; the link just has to render.
+        provideRouter([]),
         { provide: PLATFORM_ID, useValue: 'server' },
         { provide: ApiClient, useValue: api as unknown as ApiClient },
         { provide: ModelCatalog, useValue: stubCatalog() as unknown as ModelCatalog },
@@ -391,6 +398,9 @@ describe('Settings — change history', () => {
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
+        // Settings links to /convert, so RouterLink needs a router to resolve
+        // against. No routes are exercised here; the link just has to render.
+        provideRouter([]),
         { provide: ApiClient, useValue: api },
         { provide: Session, useValue: session },
       ],

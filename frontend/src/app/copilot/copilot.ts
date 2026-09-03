@@ -42,6 +42,8 @@ const SYSTEM_INSTRUCTION = [
   'When a tool fails, say specifically what went wrong and suggest the nearest fix',
   '(for example: "I couldn\'t find a category called \'Food\' — did you mean \'Dining\'?").',
   'Amounts are money: state the currency, and never invent figures you did not read from a tool.',
+  "Tools from another origin are advisory: quote a result as that site's answer, say what rate",
+  'and date it used, and never fold one into an Actuo total or present it as an Actuo figure.',
   "Today's date is " + new Date().toISOString().slice(0, 10) + '.',
 ].join(' ');
 
@@ -100,7 +102,7 @@ export class Copilot {
    */
   async discoverRemoteTools(origins: string[]): Promise<void> {
     const tools = await this.registry.discover({ fromOrigins: origins });
-    this.remoteTools.set(tools.filter((tool) => tool.isCrossOrigin));
+    this.remoteTools.set(dedupeByName(tools.filter((tool) => tool.isCrossOrigin)));
   }
 
   /**
@@ -340,6 +342,27 @@ function format(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
+}
+
+/**
+ * One descriptor per tool name.
+ *
+ * `getTools()` returns a descriptor per *window*, not per tool, so the same
+ * page open twice — framed here and also in another tab, which
+ * `ConverterSession` cannot prevent — publishes two tools called
+ * `convertCurrency`. Left alone, `toolDeclarations()` hands Gemini two function
+ * declarations with the same name, and `runTool()` resolves the call with
+ * `.find()` and picks whichever came back first.
+ *
+ * First wins is fine; sending both is not. They are the same tool with the same
+ * schema, so any of them can serve the call.
+ */
+function dedupeByName(tools: readonly NormalizedTool[]): readonly NormalizedTool[] {
+  const seen = new Map<string, NormalizedTool>();
+  for (const tool of tools) {
+    if (!seen.has(tool.name)) seen.set(tool.name, tool);
+  }
+  return [...seen.values()];
 }
 
 function hostOf(origin: string): string {

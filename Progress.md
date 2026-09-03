@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-08-29 · **Baseline:** 9 shared · 64 backend unit · 34 backend e2e · 742 frontend
+**Last audited:** 2026-09-03 · **Baseline:** 9 shared · 65 backend unit · 34 backend e2e · 784 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -147,8 +147,9 @@ their own expense.
 | Item | Phase | Status | Notes |
 |---|---|---|---|
 | Original + converted amounts stored | 1 | ✅ | Columns exist. `core/expense/amount.ts` owns the rule: `sumSpend()` adds only base-currency rows and reports the rest |
-| Live FX + daily cache | 1 | ⬜ | No FX client, no cache, no rates table |
+| Live FX + daily cache | 1 | ⬜ | No FX client, no cache, no rates table. The embedded converter does **not** count — see below |
 | Historical rate lock | 1 | ⬜ | No rate column |
+| Embedded converter (advisory) | 1 | ✅ | `converter/currency-converter.ts` frames a separate converter app on `/convert`, `/agent`, the dashboard notice and foreign-currency expense rows. One frame at a time, lazily mounted, `CONVERTER_URL` from `GET /api/config` |
 
 > **Totals are now honest about what they exclude.** `convertedAmount` is still
 > only set when the currency already equals the base currency, so foreign rows
@@ -164,6 +165,16 @@ their own expense.
 > This is the honest interim, not the feature: real FX (live rates, daily cache,
 > historical lock) is still ⬜, and the moment `converted_amount` starts being
 > filled, those rows re-enter every total with no code change.
+>
+> **The embedded converter does not change any of that, deliberately.** It is a
+> reference a person reads, framed from a separate origin; it writes nothing,
+> and `CurrencyConverter` has no `output()` and no `postMessage` listener, so
+> there is no channel a converted figure could travel back through. That
+> absence is the enforcement, and `currency-converter.spec.ts` asserts it
+> directly — along with the two surface specs proving that opening the lookup
+> moves neither the row's amount nor the dashboard total. `amount.spec.ts` is
+> untouched by this work, which is the point: if a change here needed to edit
+> it, the change would be wrong.
 
 **Verify:** file expenses in two currencies and confirm the dashboard total is
 not a naive sum, and that it says how many rows it left out.
@@ -199,7 +210,7 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | Confirmation before mutating tools | 0 | ✅ | In-chat card. PRD says "native dialog"; in-chat was chosen deliberately |
 | Key-setup flow when no key | 0 | ✅ | Opens into setup rather than failing silently |
 | Embeddable via one `<script>` | 3 | ⬜ | It is an Angular component inside the app shell |
-| **Cross-origin tool use** | 0 | ✅ | `/agent` embeds the partner page from `PARTNER_DEMO_ORIGIN` (:4201, `scripts/partner-server.mjs`) with `allow="tools"` and calls `discoverRemoteTools()`. Verified in Chrome 151 with the flag: both partner tools discovered, `executeTool()` returned a price cross-origin |
+| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. In dev that is the partner page on :4201 (`scripts/partner-server.mjs`); in production it is an independently deployed converter, which is what makes the claim hold on the deployed URL. Verified in Chrome 151 with the flag on the partner page: both tools discovered, `executeTool()` returned a price cross-origin. **Not yet verified against the production converter** — see the rough edges |
 
 ## §6.9 Admin & Settings — 🟡
 
@@ -312,11 +323,14 @@ the video, and Phase 1–3 features.
 
 ### Known rough edges, deliberately not fixed here
 
-- **The cross-origin demo cannot work on the deployed URL as configured.** The
-  partner page ships inside the app, so on a deploy it is same-origin, and
-  `/agent` says so rather than showing an empty list. Hosting
-  `frontend/public/partner-demo/` elsewhere and setting `PARTNER_DEMO_ORIGIN` is
-  a small follow-up.
+- **The cross-origin path has not been run end to end against the production
+  converter.** The wiring is verified by 42 new specs and by the partner page in
+  Chrome 151, but nobody has yet loaded a deployed Actuo, framed the deployed
+  converter, and watched the Copilot call `convertCurrency` across the two real
+  origins. Two things have to be true first: the converter's `exposedTo` change
+  must be deployed, and `CONVERTER_URL` must be set on the Render service. Until
+  then the surfaces show their honest "no tools discovered from that origin yet"
+  state, which is correct but is not the demo.
 - **CI has never run on GitHub.** The workflow was verified by running its exact
   command sequence locally; `act` is not installed on this machine.
 - **Firebase App Hosting has an open issue with pnpm workspaces**
@@ -329,7 +343,9 @@ the video, and Phase 1–3 features.
   ~54px in a 65px slot at 390px, measured), but it is tight, and this was
   verified by measurement rather than at a real 390px viewport.
 - **No CSP header is set anywhere yet.** When one lands it will need `frame-src`
-  for the partner origin, or the cross-origin demo breaks silently.
+  for the converter origin (`CONVERTER_URL`) *and* for the local partner origin,
+  or every converter surface breaks silently — an iframe blocked by CSP renders
+  empty with no error the page can see.
 - **Brand assets are generated, not designed.** `scripts/generate-brand-assets.mjs`
   produces the icons and og card from the palette with ImageMagick. They are
   clean but plain, and regenerating after a palette change is manual.

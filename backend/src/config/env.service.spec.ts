@@ -20,38 +20,51 @@ describe('EnvService', () => {
     else process.env['NODE_ENV'] = originalNodeEnv;
   });
 
-  describe('partnerOrigin', () => {
-    it('uses the configured origin whenever there is one', () => {
-      expect(createEnv({ PARTNER_DEMO_ORIGIN: 'https://books.example' }).partnerOrigin).toBe(
-        'https://books.example',
-      );
+  describe('converterUrl', () => {
+    it('uses the configured URL whenever there is one', () => {
+      expect(
+        createEnv({ CONVERTER_URL: 'https://cambiaro.programmersingh.dev/' }).converterUrl,
+      ).toBe('https://cambiaro.programmersingh.dev/');
     });
 
-    it('honours the configured origin in production too', () => {
+    it('honours the configured URL in production too', () => {
       process.env['NODE_ENV'] = 'production';
-      expect(createEnv({ PARTNER_DEMO_ORIGIN: 'https://books.example' }).partnerOrigin).toBe(
-        'https://books.example',
-      );
+      expect(
+        createEnv({ CONVERTER_URL: 'https://cambiaro.programmersingh.dev/' }).converterUrl,
+      ).toBe('https://cambiaro.programmersingh.dev/');
     });
 
     it('falls back to the local partner server in development', () => {
-      // `pnpm run dev` starts it there, so the cross-origin demo needs no setup.
-      expect(createEnv().partnerOrigin).toBe('http://localhost:4201');
+      // `pnpm run dev` starts it there, so the cross-origin path needs no setup.
+      expect(createEnv().converterUrl).toBe('http://localhost:4201/partner-demo/');
     });
 
     /**
      * The bug this pins: a deployed instance serving `http://localhost:4201`
-     * would make `/agent` embed an iframe pointing at each *visitor's* own
-     * machine — a broken frame on the one page whose job is to demonstrate
-     * cross-origin tools. Empty means "not configured", and `/agent` says so.
+     * would embed an iframe pointing at each *visitor's* own machine — a broken
+     * frame on the surfaces whose job is to demonstrate cross-origin tools.
+     * Empty means "not configured", and those surfaces say so.
      */
-    it('reports no origin at all in production when none is configured', () => {
+    it('reports no URL at all in production when none is configured', () => {
       process.env['NODE_ENV'] = 'production';
-      expect(createEnv().partnerOrigin).toBe('');
+      expect(createEnv().converterUrl).toBe('');
     });
 
     it('treats a blank value as unconfigured, not as configured-empty', () => {
-      expect(createEnv({ PARTNER_DEMO_ORIGIN: '   ' }).partnerOrigin).toBe('http://localhost:4201');
+      expect(createEnv({ CONVERTER_URL: '   ' }).converterUrl).toBe(
+        'http://localhost:4201/partner-demo/',
+      );
+    });
+
+    /**
+     * The value carries a path, not just an origin, because the two things it
+     * points at do not agree on one: Cambiaro serves at `/` and the local
+     * partner demo at `/partner-demo/`. Consumers take the origin from it.
+     */
+    it('keeps a path so one value covers both converter and partner demo', () => {
+      const url = createEnv({ CONVERTER_URL: 'https://cambiaro.programmersingh.dev/' }).converterUrl;
+      expect(new URL(url).origin).toBe('https://cambiaro.programmersingh.dev');
+      expect(new URL(createEnv().converterUrl).pathname).toBe('/partner-demo/');
     });
   });
 

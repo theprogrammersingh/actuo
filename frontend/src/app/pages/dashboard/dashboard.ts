@@ -12,6 +12,8 @@ import type { BudgetStatus, Expense, Organization, Page } from '@actuo/shared';
 
 import { ApiClient } from '../../core/api/api-client.js';
 import { Card, EmptyState, ErrorState, Skeleton, StatCard } from '../../ui';
+import { CurrencyConverter } from '../../converter/currency-converter.js';
+import { ConverterSession } from '../../converter/converter-session.js';
 import { formatDay, formatMoney } from '../../core/format/money.js';
 import { excludedNotice, expenseCurrency } from '../../core/expense/amount.js';
 import {
@@ -70,7 +72,7 @@ const PACE_LABEL: Record<PaceStatus, string> = {
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Card, EmptyState, ErrorState, Skeleton, StatCard],
+  imports: [Card, CurrencyConverter, EmptyState, ErrorState, Skeleton, StatCard],
   host: { class: 'block' },
   template: `
     <section class="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
@@ -154,6 +156,35 @@ const PACE_LABEL: Record<PaceStatus, string> = {
         -->
         @if (excludedNote(); as note) {
           <p class="mt-3 text-xs text-muted" role="status">{{ note }}</p>
+
+          <!--
+            The converter is offered here because this is where the question
+            forms, but the copy has to work hard: looking up a rate does NOT
+            make these rows count, and a bare "Convert currencies" next to an
+            exclusion notice reads exactly like "click here to include them".
+            Say what it does and what it does not.
+          -->
+          @if (converter.isAvailable()) {
+            <button
+              type="button"
+              class="mt-2 text-xs text-muted underline decoration-line underline-offset-2 hover:text-body"
+              [attr.aria-expanded]="converter.isOpen(converterSurface)"
+              (click)="converter.toggle(converterSurface)"
+            >
+              {{
+                converter.isOpen(converterSurface)
+                  ? 'Hide the rate lookup'
+                  : "Look up today's rate — this won't change the total"
+              }}
+            </button>
+
+            <div class="mt-3">
+              <app-currency-converter
+                [surface]="converterSurface"
+                title="Currency converter — rate lookup"
+              />
+            </div>
+          }
         }
 
         <div class="mt-6 grid gap-4 lg:grid-cols-5">
@@ -309,6 +340,24 @@ export class Dashboard {
    * window — which is exactly what the tiles and the trend report on. One
    * notice for the screen beats repeating the caveat on every tile.
    */
+  /** Owns the single converter frame; the trigger below is one of four. */
+  protected readonly converter = inject(ConverterSession);
+
+  /** This mount point's id. See `ConverterSession.open`. */
+  protected readonly converterSurface = 'dashboard';
+
+  constructor() {
+    /*
+     * Resolve the converter's config up front. The rate-lookup trigger is gated
+     * on `isAvailable()`, and the frame that would otherwise load that config
+     * only mounts once the trigger is shown — so without this the gate could
+     * never open. The session caches it, so this is one request per session
+     * however many surfaces ask.
+     */
+    void this.converter.ensureConfig();
+  }
+
+
   protected readonly excludedNote = computed(() =>
     excludedNotice(sumSpend(this.expenses()).excluded),
   );

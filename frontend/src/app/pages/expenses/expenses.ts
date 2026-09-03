@@ -14,7 +14,9 @@ import type { Expense, Page, TransitionAction } from '@actuo/shared';
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Badge, Button, EmptyState, ErrorState, Input, Skeleton } from '../../ui';
 import { formatDate, formatMoney } from '../../core/format/money.js';
-import { expenseAmount, expenseCurrency } from '../../core/expense/amount.js';
+import { expenseAmount, expenseCurrency, isConverted } from '../../core/expense/amount.js';
+import { CurrencyConverter } from '../../converter/currency-converter.js';
+import { ConverterSession } from '../../converter/converter-session.js';
 import { Session } from '../../core/session/session.js';
 import {
   ACTION_LABEL,
@@ -60,7 +62,7 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
 @Component({
   selector: 'app-expenses',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Badge, Button, EmptyState, ErrorState, Input, Skeleton],
+  imports: [Badge, Button, CurrencyConverter, EmptyState, ErrorState, Input, Skeleton],
   host: { class: 'block' },
   template: `
     <section class="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
@@ -279,6 +281,23 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                 @if (errorFor(row.id); as message) {
                   <p class="mt-2 text-left text-xs text-status-danger" role="status">{{ message }}</p>
                 }
+
+                @if (canConvert(row)) {
+                  <div class="mt-2 text-left">
+                    <button
+                      type="button"
+                      class="text-xs text-muted underline decoration-line underline-offset-2 hover:text-body"
+                      [attr.aria-expanded]="converter.isOpen(converterSurface(row.id))"
+                      (click)="converter.toggle(converterSurface(row.id))"
+                    >
+                      {{
+                        converter.isOpen(converterSurface(row.id))
+                          ? 'Hide the rate lookup'
+                          : 'What is this in ' + baseCurrencyOf(row) + '?'
+                      }}
+                    </button>
+                  </div>
+                }
                   </td>
                 </tr>
               }
@@ -384,9 +403,52 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
                 @if (errorFor(row.id); as message) {
                   <p class="mt-2 text-left text-xs text-status-danger" role="status">{{ message }}</p>
                 }
+
+                @if (canConvert(row)) {
+                  <div class="mt-2 text-left">
+                    <button
+                      type="button"
+                      class="text-xs text-muted underline decoration-line underline-offset-2 hover:text-body"
+                      [attr.aria-expanded]="converter.isOpen(converterSurface(row.id))"
+                      (click)="converter.toggle(converterSurface(row.id))"
+                    >
+                      {{
+                        converter.isOpen(converterSurface(row.id))
+                          ? 'Hide the rate lookup'
+                          : 'What is this in ' + baseCurrencyOf(row) + '?'
+                      }}
+                    </button>
+                  </div>
+                }
             </li>
           }
         </ul>
+      }
+
+      <!--
+        ONE converter for the page, not one per row.
+
+        Both layouts above are in the DOM at all times — the table is hidden
+        below the md breakpoint and the card list above it, so CSS decides which
+        but both render. A panel inside the row markup therefore mounted TWICE
+        for a single open row: two iframes, two loads of a whole separate app,
+        and two windows publishing the same WebMCP tool names. Rendering it once
+        here, driven by whichever row is open, is what keeps the one-frame rule
+        ConverterSession enforces everywhere else.
+      -->
+      @if (openConverterFor(); as openRow) {
+        <div class="mt-4 rounded-lg border border-line bg-surface p-3">
+          <p class="mb-2 text-xs text-muted">
+            Rate lookup for
+            <span class="text-body">{{ openRow.merchant || 'this expense' }}</span> —
+            {{ amountText(openRow) }} filed in {{ openRow.currency }}. This does not change what
+            the expense is recorded as.
+          </p>
+          <app-currency-converter
+            [surface]="converterSurface(openRow.id)"
+            [title]="'Currency converter for ' + (openRow.merchant || 'this expense')"
+          />
+        </div>
       }
 
       <!--
@@ -445,6 +507,21 @@ export class Expenses {
   protected readonly comment = signal('');
   /** Row id whose Delete has been armed — the second click confirms. */
   protected readonly armedDelete = signal<string | null>(null);
+
+  /** Owns the single converter frame across every surface. */
+  protected readonly converter = inject(ConverterSession);
+
+  constructor() {
+    /*
+     * Resolve the converter's config up front. The rate-lookup trigger is gated
+     * on `isAvailable()`, and the frame that would otherwise load that config
+     * only mounts once the trigger is shown — so without this the gate could
+     * never open. The session caches it, so this is one request per session
+     * however many surfaces ask.
+     */
+    void this.converter.ensureConfig();
+  }
+
   /** Row id with an action in flight, so its buttons can show a busy state. */
   protected readonly busyRow = signal<string | null>(null);
   protected readonly rowError = signal<{ id: string; message: string } | null>(null);
@@ -682,6 +759,46 @@ export class Expenses {
     this.text.set(DEFAULT_FILTER.text);
     this.status.set(DEFAULT_FILTER.status);
   }
+
+  /**
+   * Whether to offer a rate lookup for this row.
+   *
+   * Only rows in another currency: a base-currency row has nothing to convert,
+   * and offering it there would be noise on most of the table. This mirrors the
+   * rule the totals use — `isConverted()` is the same predicate `sumSpend()`
+   * excludes on, so the trigger appears on exactly the rows the dashboard says
+   * it left out.
+   *
+   * NOTE: the lookup is advisory. It does not, and must not, change
+   * `amountText()` or anything that feeds a total — see `CurrencyConverter`.
+   */
+  protected canConvert(expense: Expense): boolean {
+    return !isConverted(expense) && this.converter.isAvailable();
+  }
+
+  /** The org's base currency, for the trigger copy. */
+  protected baseCurrencyOf(expense: Expense): string {
+    return expense.baseCurrency || 'your base currency';
+  }
+
+  /** One surface id per row, so opening one row closes any other. */
+  protected converterSurface(id: string): string {
+    return `expense:${id}`;
+  }
+
+  /**
+   * The row whose rate lookup is open, if any.
+   *
+   * Read back from the session rather than kept as a second copy: the session
+   * is what enforces one frame at a time across every surface, and a local
+   * signal here could disagree with it.
+   */
+  protected readonly openConverterFor = computed(() => {
+    const surface = this.converter.openedSurface();
+    if (!surface?.startsWith('expense:')) return null;
+    const id = surface.slice('expense:'.length);
+    return this.rows().find((row) => row.id === id) ?? null;
+  });
 
   /**
    * Printed in the currency the value is actually in.
