@@ -26,6 +26,12 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
 
+    # Already attached in the dashboard; declared here so the repo is the record
+    # of what this service answers on. Every hostname listed must also appear in
+    # NG_ALLOWED_HOSTS below, or its pages 400.
+    domains:
+      - actuo.programmersingh.dev
+
     # `/api/health` is @Public() — it is the one route that answers before any
     # credential exists, which is what makes it usable as a probe. A 5xx here
     # means Nest booted but its own health route is failing, not that a secret
@@ -34,30 +40,39 @@ services:
     healthCheckPath: /api/health
 
     envVars:
-      # Angular 21 checks the Host header against an allowlist (SSRF protection).
-      # Off the list it does NOT error — it silently falls back to client-side
-      # rendering, discarding the SSR and structured-data work in PRD §8.5. This
-      # REPLACES the build-time list in angular.json, so every hostname the
-      # service answers on has to be here. Matching is by suffix, so one wildcard
-      # covers `actuo.onrender.com` and any preview hostname.
+      # Angular checks the Host header against an allowlist (SSRF protection).
+      # A miss on a configured list is a 400 text/plain, naming the host; only
+      # an EMPTY list falls back to client-side rendering instead.
       #
-      # Verify after deploying: the HTML for `/` must contain `ng-server-context`.
-      # If it does not, this value is wrong and the site is rendering client-side.
+      # Comma-separated, and UNIONED with angular.json's own
+      # security.allowedHosts rather than replacing it — AngularAppEngine builds
+      # `new Set([...envList, ...manifest.allowedHosts])` — so localhost keeps
+      # working no matter what is listed here.
+      #
+      # `*.onrender.com` is a suffix match (hostname.endsWith('.onrender.com')),
+      # kept so preview hostnames render. The custom domain is listed exactly:
+      # `*.programmersingh.dev` would admit every other subdomain of that zone.
+      #
+      # Verify after deploying: the HTML for `/` must contain `ng-server-context`
+      # on every hostname the service answers on.
       - key: NG_ALLOWED_HOSTS
-        value: "*.onrender.com"
+        value: "*.onrender.com,actuo.programmersingh.dev"
 
-      # BUILD-TIME, and it works here only because Render translates a service
-      # env var into a Docker build argument automatically — the Dockerfile
-      # declares `ARG PUBLIC_ORIGIN` to receive it. The public pages are
-      # prerendered, so `<loc>`, `og:image` and `canonical` are baked before the
-      # image finishes; there is no request to derive an origin from.
+      # The origin this deploy calls its own — read TWICE, and changing it needs
+      # a REBUILD, not a restart.
       #
-      # It must carry the scheme: stamp-seo.mjs substitutes the value verbatim,
-      # so a bare hostname produces a `<loc>` that is not a URL. Change this when
-      # a custom domain is attached, and redeploy — a rebuild is required, since
-      # a runtime variable cannot reach prerendered HTML.
+      #  * At build time by stamp-seo.mjs. Render turns a service env var into a
+      #    Docker build argument automatically and the Dockerfile declares
+      #    `ARG PUBLIC_ORIGIN` to receive it. The public pages are prerendered,
+      #    so `<loc>`, `og:image` and `canonical` are baked before the image
+      #    finishes — there is no request to derive an origin from.
+      #  * At runtime by server.mjs, which 308-redirects page requests arriving
+      #    on any other host here. Unset, that redirect is simply off.
+      #
+      # It must carry the scheme: stamp-seo.mjs substitutes it verbatim, so a
+      # bare hostname produces a `<loc>` that is not a URL.
       - key: PUBLIC_ORIGIN
-        value: https://actuo.onrender.com
+        value: https://actuo.programmersingh.dev
 
       # Not a credential; the service-role key below is.
       - key: SUPABASE_URL
@@ -88,8 +103,8 @@ services:
       # cross-origin path would prove nothing. Cambiaro is a genuinely separate
       # deployment, which is the point.
       #
-      # RUNTIME, unlike PUBLIC_ORIGIN above: nothing about it is prerendered,
-      # so changing it needs a restart rather than a rebuild.
+      # RUNTIME only: nothing about it is prerendered, so changing it needs a
+      # restart rather than the rebuild PUBLIC_ORIGIN above needs.
       - key: CONVERTER_URL
         value: https://cambiaro.programmersingh.dev/
 

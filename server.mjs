@@ -47,6 +47,10 @@ async function loadBuilt(specifier, what) {
 }
 
 const { createNestApp } = await loadBuilt('./backend/dist/bootstrap.js', 'the backend build');
+const { canonicalRedirect } = await loadBuilt(
+  './backend/dist/common/canonical-redirect.js',
+  'the backend build',
+);
 const { reqHandler } = await loadBuilt(
   './frontend/dist/frontend/server/server.mjs',
   'the frontend SSR build',
@@ -61,7 +65,21 @@ const nest = await createNestApp();
  * routes, it is the fallback for everything that is not `/api/*`: static assets
  * from `dist/browser`, then server-side rendering.
  */
-nest.getHttpAdapter().getInstance().use(reqHandler);
+const express = nest.getHttpAdapter().getInstance();
+
+/*
+ * ORDER IS SIGNIFICANT. The redirect goes before the Angular handler so it also
+ * covers the static assets that handler serves — `sitemap.xml` and `robots.txt`
+ * among them, which otherwise answer 200 on every hostname because
+ * `express.static` runs ahead of Angular's host check and never sees it.
+ *
+ * `PUBLIC_ORIGIN` is the same value `stamp-seo.mjs` bakes into `<loc>`,
+ * `canonical` and `og:image` at build time — reused rather than paired with a
+ * second variable that would have to stay in step with it. Unset, the redirect
+ * is a pass-through.
+ */
+express.use(canonicalRedirect(process.env.PUBLIC_ORIGIN, (why) => console.warn(`[actuo] ${why}`)));
+express.use(reqHandler);
 
 // 0.0.0.0, not the default localhost: a container that binds the loopback
 // interface passes its own health check and is unreachable from outside.

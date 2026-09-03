@@ -346,9 +346,23 @@ larger image beats a step that silently half-works.
 
 **`NG_ALLOWED_HOSTS` — a hard 400.** Angular checks `Host` and
 `X-Forwarded-Host` against an allowlist (SSRF). With one configured a miss is
-**400 `text/plain`**; only an *empty* list falls back to CSR. The env var is a
-comma list and is **unioned with** `angular.json`'s `security.allowedHosts`, not
-a replacement. `*.example.com` matches by suffix. Never set it to `*`.
+**400 `text/plain`** naming the host; only an *empty* list falls back to CSR.
+The env var is a comma list and is **unioned with** `angular.json`'s
+`security.allowedHosts`, not a replacement — `AngularAppEngine.getAllowedHosts`
+builds `new Set([...envList, ...manifest.allowedHosts])`, so `localhost` keeps
+working whatever is listed. `*.example.com` matches by suffix
+(`hostname.endsWith('.example.com')`, so it does **not** cover the bare apex).
+Never set it to `*`. Verified against `@angular/ssr`, not the docs.
+
+**Static files skip the check entirely**, which is how a half-broken deploy
+presents: `express.static` runs ahead of the Angular handler, so on a hostname
+that is not allowlisted `/sitemap.xml` and `/robots.txt` answer 200 while every
+SSR route 400s.
+
+The service answers on **two** hostnames — `actuo.onrender.com` and
+`actuo.programmersingh.dev` — so both are listed. The custom domain is listed
+exactly rather than as `*.programmersingh.dev`, which would admit every other
+subdomain of that zone.
 
 **Untrusted proxy headers — this is the silent one.** Angular deopts to CSR on
 any `x-forwarded-*` header it was not told to trust, returning a normal 200 that
@@ -361,9 +375,10 @@ Verify with `pnpm run verify:deploy <url>`, which tells the two apart. Reproduce
 the second locally:
 `curl -s -H 'X-Forwarded-For: 203.0.113.9' localhost:8080/ | grep ng-server-context`
 
-**`PUBLIC_ORIGIN` is a BUILD-time variable, not a runtime one** — a `Dockerfile`
-`ARG`. On Render it is declared as a normal env var only because Render turns
-those into build args; on any other host it needs an explicit `--build-arg`. The public pages are prerendered, so absolute
+**`PUBLIC_ORIGIN` is read twice, and changing it needs a REBUILD.** It is a
+`Dockerfile` `ARG` for the build half; on Render it is declared as a normal env
+var only because Render turns those into build args, and on any other host it
+needs an explicit `--build-arg`. The public pages are prerendered, so absolute
 URLs — `<loc>` in the sitemap, `og:image`, `canonical` — must be decided before
 the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
 `__PUBLIC_ORIGIN__` sentinel that survives prerendering into every generated
@@ -379,8 +394,39 @@ Unset, `PUBLIC_ORIGIN` substitutes `''` and everything stays root-relative and
 valid. It must carry the scheme: the value is substituted verbatim, so a bare
 hostname yields a `<loc>` that is not a URL.
 
+The **second** read is at runtime, by `server.mjs`, and it is why one variable
+covers both rather than a `CANONICAL_ORIGIN` that would have to stay in step
+with it — the same reasoning that keeps `CONVERTER_URL` a single value. On a
+host that only passes it as a `--build-arg` it is absent at runtime and the
+redirect below is simply off.
+
+**The canonical redirect.** Two origins serving identical pages is duplicate
+content, and only one can be the `canonical` the prerendered HTML names, so
+`backend/src/common/canonical-redirect.ts` 308s page requests on any other
+hostname to `PUBLIC_ORIGIN`. Four things about it are load-bearing:
+
+- **`/api` can never reach it, by placement rather than by a check.** It is
+  registered after Nest, whose `setGlobalPrefix('/api')` scopes the not-found
+  router to `/api`, so every `/api/*` request is answered first — Render's
+  `/api/health` probe included. `routing-contract.e2e-spec.ts` pins that.
+- **It runs before the Angular handler**, deliberately, so it also covers the
+  static files that skip Angular's host check.
+- **It changes what an unknown host sees**: a 308 here instead of Angular's
+  400. The two guards compose. Not an open redirect — the target is always
+  built from `PUBLIC_ORIGIN`, never from the request.
+- **GET/HEAD only, and never loopback**, or `node server.mjs` locally would
+  bounce to production.
+
+It lives under `backend/` because that is the only workspace with a test runner
+that can reach it; `server.mjs` imports it from `dist` exactly as it already
+imports `createNestApp`.
+
 **`pnpm run verify:deploy <url>`** checks the deployed result. Local green does
-not mean deployed correct.
+not mean deployed correct. It also asserts the **stamped origin matches the URL
+being verified** — a missing sentinel only proves something was substituted, not
+that the right thing was, and attaching the custom domain made every page it
+served name the old origin — and it recognises an **alias** origin, reporting
+the redirect and skipping the page checks that belong to the canonical one.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and
@@ -420,7 +466,8 @@ Getting them confused is how the UI briefly offered an Approve button that alway
 and the rate lock — no controller, deliberately), `budgets/`, `reports/` (polled job for
 the cancellation demo), `tool-calls/` (audit log), `orgs/`, `config/`
 (`GET /api/config` serves the Gemini model list so it is editable without a
-rebuild), `supabase/` (client + repository seam), `common/` (rate limiting).
+rebuild), `supabase/` (client + repository seam), `common/` (rate limiting, and the
+canonical-host redirect `server.mjs` mounts).
 Migrations live in `supabase/migrations/`. Seed users: `priya@actuo.demo`
 (owner), `arjun@actuo.demo` (member), password `Demo1234!`.
 

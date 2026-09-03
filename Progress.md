@@ -2,7 +2,7 @@
 
 Tracks every feature in the PRD against what is actually in the codebase.
 
-**Last audited:** 2026-09-03 · **Baseline:** 12 shared · 93 backend unit · 34 backend e2e · 803 frontend
+**Last audited:** 2026-09-03 · **Baseline:** 12 shared · 114 backend unit · 34 backend e2e · 803 frontend
 
 Status is evidence-based, not aspirational. A row is `DONE` only when the code
 exists, is reachable from the running app, and has a test. A file existing is not
@@ -216,7 +216,7 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | Confirmation before mutating tools | 0 | ✅ | In-chat card. PRD says "native dialog"; in-chat was chosen deliberately |
 | Key-setup flow when no key | 0 | ✅ | Opens into setup rather than failing silently |
 | Embeddable via one `<script>` | 3 | ⬜ | It is an Angular component inside the app shell |
-| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. The synthetic partner page and its :4201 server are gone: dev and production now frame the same independently deployed converter, so there is no cross-origin path that is only exercised in one of them. **Verified 2026-09-03 in Chrome 151 with the flag**, framing the deployed converter from `localhost:4200`: all seven of its tools discovered over a real origin boundary, badges correct (4 read-only / 3 mutating), and `executeTool(convertCurrency, {amount:200,from:'EUR',to:'INR'})` returned `200 EUR = 22,018.00 INR` with the embedded widget moving to match. Not yet run from a *deployed* Actuo — see the rough edges |
+| **Cross-origin tool use** | 0 | ✅ | The converter is framed from `CONVERTER_URL` with `allow="tools"`, and `ConverterSession` owns discovery for all four surfaces. The synthetic partner page and its :4201 server are gone: dev and production now frame the same independently deployed converter, so there is no cross-origin path that is only exercised in one of them. **Verified 2026-09-03 in Chrome 151 with the flag**, first from `localhost:4200` — all seven of its tools discovered over a real origin boundary, badges correct (4 read-only / 3 mutating), and `executeTool(convertCurrency, {amount:200,from:'EUR',to:'INR'})` returning `200 EUR = 22,018.00 INR` with the embedded widget moving to match — and then **from the deployed Actuo at `/agent`**, which closes the last gap: two genuinely public origins, neither serving the other |
 
 ## §6.9 Admin & Settings — 🟡
 
@@ -238,7 +238,7 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
 | **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
-| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier in-repo page unprovable. It is now a separately built, independently deployed app Actuo does not own, in dev as well as on a deploy |
+| Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier in-repo page unprovable. It is now a separately built, independently deployed app Actuo does not own, and it is proven from the deploy itself, not only from localhost |
 | Security annotations | ✅ | `readOnlyHint` on all five, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the converter's tools, whose results carry third-party rate data; shown as a badge on the tool-call card |
 | `getTools()` discovery | ✅ | Drives the cross-origin path and the `/agent` panel; re-runs on `toolchange`. The Copilot still reads its own registry for local tools, deliberately — see "the tool registry decision" |
 | `executeTool()` + manual debug panel | 🟡 | `executeTool()` done, and `/agent` renders `Copilot.crossOriginTools` and the registry's `invocationLog()`. Still read-only: there is no form to invoke a tool by hand with arbitrary arguments |
@@ -287,13 +287,13 @@ and the offline banner appearing and clearing on the network events.
 | Unit tests for tool `execute()` | ✅ | — |
 | Structured logging / error tracking | ⬜ | Nest logger only; no Sentry-tier reporting |
 | **CI** | ✅ | `.github/workflows/ci.yml` runs the full Definition of Done gate on push and PR, and **has run on GitHub** — five successful runs, most recently on PR #4 |
-| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts` |
+| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts`. It also mounts `common/canonical-redirect.ts`, which 308s pages on any non-canonical hostname — placed after Nest so `/api` can never reach it, and before the Angular handler so it also covers the static files that skip Angular's host check |
 
 ## §12 Submission criteria — 🟡
 
 | Item | Status | Notes |
 |---|---|---|
-| **Public deployed URL** | ✅ | **Live and correct at `https://actuo.onrender.com`** — `pnpm run verify:deploy https://actuo.onrender.com` passes all six checks as of 2026-09-03: `/api/health` 200, `/` server-rendered (`ng-server-context` present), `/`, `sitemap.xml` and `robots.txt` all stamped, and `/api/config` reporting the converter. `server.mjs` composes Nest under `/api` with the Angular SSR handler from a committed `Dockerfile`; Firebase App Hosting was abandoned after three distinct buildpack failures against this workspace monorepo (see README *Why a Dockerfile*). The two earlier defects — CSR fallback and a literal `__PUBLIC_ORIGIN__` — are both gone |
+| **Public deployed URL** | ✅ | **Live at `https://actuo.programmersingh.dev`**, with `https://actuo.onrender.com` kept as an alias that 308s to it. `server.mjs` composes Nest under `/api` with the Angular SSR handler from a committed `Dockerfile`; Firebase App Hosting was abandoned after three distinct buildpack failures against this workspace monorepo (see README *Why a Dockerfile*). Attaching the custom domain broke it in the documented way — every page 400'd on the new host until it was added to `NG_ALLOWED_HOSTS` — and in one that was **not** caught by any check: the SEO stamp is baked at build time, so the new domain served a sitemap, `canonical` and `og:image` all naming the old origin. `verify:deploy` now asserts the stamped origin matches the URL it is checking |
 | README | ✅ | Root `README.md`: what is WebMCP-specific and where, the flag setup, what works without it, and the deploy steps. Workspace READMEs are still starter boilerplate |
 | Demo video | ⬜ | The last box left. The script is the "What to look at" list in `README.md`, and the SSR fix it was waiting on has landed — the deployed site server-renders, so a recording made now records the real thing |
 | Source with clear tool definitions | ✅ | `shared/src/tools.ts` |
@@ -302,43 +302,31 @@ and the offline banner appearing and clearing on the network events.
 
 ## What to fix next
 
-Every Phase 0 row is green, the deploy is live *and* correct, and real FX
-landed on 2026-09-03. What is left is the rest of Phase 1, and the video.
+Every Phase 0 row is green, real FX landed on 2026-09-03, the deploy is live on
+its own domain, and cross-origin is proven from that deploy. What is left is the
+rest of Phase 1, and the video.
 
-1. **Prove cross-origin from the deployed site.** `CONVERTER_URL` is set and
-   `/api/config` serves it, so this is very likely already working and merely
-   unverified. Open `https://actuo.onrender.com/agent` in flag-enabled Chrome
-   151, confirm Cambiaro's seven tools are discovered across two public origins,
-   and ask the Copilot to convert €80. Ten minutes, and it turns §7's
-   cross-origin row from locally-proven into deploy-proven.
-2. **Demo video** — the last §12 checkbox. The script is the "What to look at"
-   list in `README.md`.
-3. **Budgets depth** — `POST /budgets` inserts and there is no PATCH, so a
-   budget can be set once and not changed; the form hides categories that
-   already have one rather than offering a guaranteed 409. Threshold alerts
-   (80%) and rollover-vs-reset are the other two §6.3 rows, and `budgets.spec.ts`
-   already guards the rollover checkbox against returning without its behaviour.
-4. **`/api/analytics/*`** — no controller; the dashboard derives everything
+1. **Budgets depth** — three open §6.3 rows, one surface. `POST /budgets`
+   inserts and there is no PATCH, so a budget can be set once and not changed;
+   the form hides categories that already have one rather than offering a
+   guaranteed 409. Threshold alerts (80%) and rollover-vs-reset are the other
+   two, and `budgets.spec.ts` already guards the rollover checkbox against
+   returning without its behaviour.
+2. **`/api/analytics/*`** — no controller; the dashboard derives everything
    client-side. Standalone spend-by-category and a month-over-month delta tile
    are the visible half.
-5. **Recurring expenses** — `recurring_templates` is in PRD §8.7 and **absent
+3. **Recurring expenses** — `recurring_templates` is in PRD §8.7 and **absent
    from the migrations**, so it needs `0004`.
-6. **Org invites** — the last Phase 1 row, and the only one needing an external
+4. **Org invites** — the last Phase 1 row, and the only one needing an external
    service (Resend, plus a `sync: false` secret in `render.yaml`).
-7. **Everything else is Phase 2–3**: receipt OCR, notifications, multi-step
+5. **Demo video** — the last §12 checkbox. The script is the "What to look at"
+   list in `README.md`.
+6. **Everything else is Phase 2–3**: receipt OCR, notifications, multi-step
    approval chains, comment threads, teams, tags, CSV import, PDF export,
    session management, and packaging the Copilot as a standalone script.
 
 ### Known rough edges, deliberately not fixed here
 
-- **The cross-origin path has not been run end to end from a *deployed* Actuo.**
-  It is verified locally against the deployed converter (see §6.8), but nobody
-  has yet loaded Actuo on Render, framed the converter from there, and watched
-  the Copilot call `convertCurrency` across two public origins. The two blockers
-  are gone — the converter commits are deployed and `CONVERTER_URL` is set, so
-  `/api/config` now serves `https://cambiaro.programmersingh.dev/`. All that is
-  left is opening `https://actuo.onrender.com/agent` in flag-enabled Chrome and
-  watching it work.
 - **The Firebase App Hosting backend may still be connected** with auto-rollouts,
   in which case it fails on every push. Deleting it is
   `firebase apphosting:backends:delete actuo --project actuo-2f1f3`. App Hosting
@@ -351,7 +339,8 @@ landed on 2026-09-03. What is left is the rest of Phase 1, and the video.
 - **No CSP header is set anywhere yet.** When one lands it will need `frame-src`
   for the converter origin (`CONVERTER_URL`) — one origin now, not two — or
   every converter surface breaks silently: an iframe blocked by CSP renders
-  empty with no error the page can see.
+  empty with no error the page can see. It also has to be written against the
+  *canonical* host, since that is the only origin that serves pages now.
 - **Brand assets are generated, not designed.** `scripts/generate-brand-assets.mjs`
   produces the icons and og card from the palette with ImageMagick. They are
   clean but plain, and regenerating after a palette change is manual.
