@@ -90,11 +90,21 @@ declarations (see "Why pnpm changes things" below).
 ```bash
 pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
 pnpm run dev           # shared, then backend (:3000) + frontend (:4200)
+pnpm run dev:clean     # same, but drops the Vite dep cache first — see below
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
 pnpm run backfill:fx   # lock ECB rates onto rows without one; dry run unless --apply
 ```
+
+**Adding or renaming an export in `@actuo/shared` needs `pnpm run dev:clean`.** Vite
+prebundles the linked workspace package into `frontend/.angular/cache/.../vite/deps/`
+and invalidates that on the lockfile and config, **not** on the package's contents — so
+`pnpm run dev` rebuilds `shared/dist` correctly while the dev server keeps serving the
+old prebundle. The symptom is `Uncaught SyntaxError: ... does not provide an export
+named 'X'`, and because it throws at module evaluation the **whole app renders blank**,
+which reads as a broken page rather than a stale cache. No test catches it: `pnpm test`
+builds through Angular's builder and never reads the dev server's cache.
 
 Both workspaces use **vitest** (Angular CLI 21 and Nest 12 both default to it now — not karma/jest).
 

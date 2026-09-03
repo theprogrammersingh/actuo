@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "pnpm run build:shared && concurrently -n backend,frontend -c blue,magenta \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
+    "dev:clean": "rm -rf frontend/.angular/cache && pnpm run dev",
     "dev:backend": "pnpm --filter backend run start:dev",
     "dev:frontend": "pnpm --filter frontend run start",
     "build:shared": "pnpm --filter @actuo/shared run build",
