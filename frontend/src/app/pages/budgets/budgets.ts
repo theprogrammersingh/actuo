@@ -191,16 +191,6 @@ import {
             </button>
           </form>
 
-          <label class="mt-3 flex items-center gap-2 text-sm text-muted">
-            <input
-              type="checkbox"
-              class="size-4 rounded border-line accent-brand-teal"
-              [checked]="newRollover()"
-              (change)="newRollover.set($any($event.target).checked)"
-            />
-            <span>Roll unspent budget into next month</span>
-          </label>
-
           @if (formMessage(); as message) {
             <p
               class="mt-3 text-sm"
@@ -252,7 +242,6 @@ export class Budgets {
   );
   protected readonly newCategoryId = signal('');
   protected readonly newAmount = signal('');
-  protected readonly newRollover = signal(false);
   protected readonly saving = signal(false);
   protected readonly formMessage = signal<string | null>(null);
   protected readonly formFailed = signal(false);
@@ -297,7 +286,8 @@ export class Budgets {
         categoryId: this.newCategoryId() || null,
         amount: Math.round(amount * 100) / 100,
         period: 'monthly',
-        rollover: this.newRollover(),
+        // No `rollover`: nothing reads the flag — `status()` always computes a
+        // fresh calendar month — so the form stopped offering it (PRD §6.3).
       });
       this.formFailed.set(false);
       this.formMessage.set('Budget saved.');

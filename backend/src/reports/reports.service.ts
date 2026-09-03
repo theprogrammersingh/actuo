@@ -11,7 +11,7 @@ export interface ReportJob {
   id: string;
   orgId: string;
   status: ReportStatus;
-  format: 'csv' | 'pdf';
+  format: 'csv';
   rows?: number;
   url?: string;
   content?: string;

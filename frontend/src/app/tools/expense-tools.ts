@@ -103,7 +103,7 @@ export class ExpenseTools {
    * abort mid-flight actually stops the work rather than merely detaching from
    * it — the UI has to reflect a real stop, not a cosmetic one.
    */
-  generateReport(): ActuoTool<{ from: string; to: string; format?: 'csv' | 'pdf' }> {
+  generateReport(): ActuoTool<{ from: string; to: string; format?: 'csv' }> {
     return {
       contract: GENERATE_REPORT,
       execute: async (args, { signal }) => {

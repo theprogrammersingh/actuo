@@ -12,15 +12,9 @@
  * survives prerendering into every generated HTML file, so one pass covers all
  * of them rather than each page needing its own handling.
  *
- * **It has to be the whole `dist/frontend` tree, not just `browser/`.** This
- * walked only `browser/` once, and the deployed site shipped a literal
- * `__PUBLIC_ORIGIN__` in its `canonical` and `og:image`: Angular keeps its own
- * copies of the page HTML under `server/` — `index.server.html` and the
- * `assets-chunks/*.mjs` templates, `index_csr_html.mjs` among them — and those
- * are what the SSR handler serves. `sitemap.xml` and `robots.txt` looked right
- * throughout, because they are served from `browser/`, which is exactly what
- * made it hard to see. A crawler reading a malformed URL is worse than one
- * reading a relative URL, so this must not narrow again.
+ * **The whole `dist/frontend` tree, not just `browser/`.** Angular keeps its own
+ * copies of the page HTML under `server/`, and those are what the SSR handler
+ * serves — walking only `browser/` shipped a literal sentinel in production.
  *
  * With PUBLIC_ORIGIN unset it substitutes the empty string, leaving every URL
  * root-relative and still valid — a local build is never broken by an
@@ -35,11 +29,7 @@ import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SENTINEL = '__PUBLIC_ORIGIN__';
-/**
- * `.mjs` is here for `server/assets-chunks/*.mjs` — Angular inlines each page's
- * HTML into a JS module, sentinel and all. Stamping a string constant inside a
- * generated module is safe: the sentinel appears nowhere else in the output.
- */
+/** `.mjs` covers `server/assets-chunks/*.mjs`, where Angular inlines page HTML. */
 const STAMPABLE = new Set(['.html', '.xml', '.txt', '.webmanifest', '.json', '.mjs']);
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));

@@ -260,17 +260,26 @@ grep -o '<loc>[^<]*</loc>' frontend/dist/frontend/browser/sitemap.xml
 
 ### Allowed hosts — the one that fails silently
 
-Angular 21 refuses to server-render a request whose `Host` header is not on an
-allowlist (SSRF protection). Off the list it does **not** error: it quietly falls
-back to client-side rendering, which throws away the SSR and structured-data work
-on the public pages. `NG_ALLOWED_HOSTS` in `render.yaml` is that list, and it
-*replaces* the build-time list in `angular.json` rather than adding to it.
+Two different things switch SSR off behind a deploy, and they look nothing alike.
+
+`NG_ALLOWED_HOSTS` is the host allowlist (SSRF protection). With it configured, a
+hostname that is not on the list gets a **400**, not a silent downgrade — and the
+value is *unioned with* the build-time list in `angular.json`, not a replacement.
+
+The one that fails silently is **proxy headers**. Angular downgrades to
+client-side rendering, with a perfectly normal 200, whenever it receives an
+`x-forwarded-*` header it was not told to trust — its default covers only
+`x-forwarded-host` and `x-forwarded-proto`, while most platform proxies also send
+`x-forwarded-for`. `frontend/src/server.ts` trusts the full set, overridable with
+`NG_TRUST_PROXY_HEADERS`.
 
 After any deploy, confirm the HTML for `/` contains `ng-server-context` — which
-is what `pnpm run verify:deploy` does. If it does not, `NG_ALLOWED_HOSTS` is not
-reaching the running container. Declaring it in `render.yaml` is not sufficient
-on its own: a service created by hand rather than from the Blueprint never had
-those `envVars` applied, so check the service's own environment first.
+is what `pnpm run verify:deploy` does, and it names which of the two causes it
+is. You can reproduce the proxy-header case locally without deploying:
+
+```bash
+curl -s -H 'X-Forwarded-For: 203.0.113.9' localhost:8080/ | grep ng-server-context
+```
 
 ### The cross-origin demo on a deployed URL
 
