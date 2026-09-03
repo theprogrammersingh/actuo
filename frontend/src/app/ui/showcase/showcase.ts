@@ -108,7 +108,7 @@ import { StatCard } from '../stat-card';
             }
           </div>
           <div class="mt-4 flex flex-wrap items-center gap-2">
-            <ui-badge tone="info" label="via partner-demo.app" />
+            <ui-badge tone="info" label="via cambiaro.programmersingh.dev" />
             <ui-badge tone="neutral" label="read-only" />
             <ui-badge status="approved" [dot]="false" />
           </div>

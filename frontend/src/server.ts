@@ -28,29 +28,6 @@ const angularApp = new AngularNodeAppEngine();
  */
 
 /**
- * The WebMCP partner demo — a static sub-site, not an Angular route.
- *
- * It needs its own mount because the general handler below sets `index: false`,
- * deliberately: letting `express.static` answer a directory request would have
- * it serve `index.html` for `/` and pre-empt server-side rendering of the
- * landing page. Without this mount `/partner-demo/` matches no Angular route,
- * falls to the router's `**` redirect and 302s to `/` — which is what it did
- * until this was added, silently, since only `/partner-demo/index.html` worked.
- *
- * `no-store` for the same reason `scripts/partner-server.mjs` uses it: the page
- * registers its tools against the `?actuo=` origin on every load, so a cached
- * copy would keep re-registering against a stale one.
- */
-app.use(
-  '/partner-demo',
-  express.static(join(browserDistFolder, 'partner-demo'), {
-    index: 'index.html',
-    redirect: true,
-    setHeaders: (res) => res.setHeader('Cache-Control', 'no-store'),
-  }),
-);
-
-/**
  * Serve static files from /browser
  */
 app.use(

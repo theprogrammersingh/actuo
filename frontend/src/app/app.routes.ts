@@ -65,6 +65,16 @@ export const routes: Routes = [
     data: { robots: NOT_INDEXABLE },
   },
   {
+    // The converter as a page of its own (PRD §6.5). Deliberately not a nav
+    // tab: the bottom bar is measured tight at six on a phone, and this is
+    // linked from the places the question actually comes up.
+    path: 'convert',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/convert/convert.js').then((m) => m.Convert),
+    title: 'Currency converter · Actuo',
+    data: { robots: NOT_INDEXABLE },
+  },
+  {
     // The WebMCP surface, made visible: what this page publishes, what it can
     // reach on other origins, and every tool call that has run (PRD §7).
     path: 'agent',

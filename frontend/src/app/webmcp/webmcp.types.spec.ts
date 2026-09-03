@@ -54,7 +54,7 @@ describe('normalizeRegisteredTool', () => {
     expect(sameOrigin.isCrossOrigin).toBe(false);
 
     const crossOrigin = normalizeRegisteredTool(
-      descriptor({ origin: 'https://partner-demo.app' }),
+      descriptor({ origin: 'https://cambiaro.programmersingh.dev' }),
       'https://actuo.app',
     );
     expect(crossOrigin.isCrossOrigin).toBe(true);

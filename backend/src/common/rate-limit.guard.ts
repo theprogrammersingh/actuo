@@ -39,7 +39,7 @@ interface Bucket {
  *    editing concurrently.
  *
  * The honest limitation: state is per-process and in memory. That is correct
- * for the single-process Firebase App Hosting deploy this ships as, and it
+ * for the single-process deploy this ships as, and it
  * resets on restart. If this ever runs multiple instances, swap the Map for
  * Redis — the guard's interface would not change.
  */
@@ -97,7 +97,7 @@ export class RateLimitGuard implements CanActivate {
 }
 
 /**
- * Identify the client. Behind Firebase App Hosting the socket address is the
+ * Identify the client. Behind a platform proxy the socket address is the
  * load balancer's, so prefer the leftmost X-Forwarded-For entry — the original
  * client — falling back to the socket address locally.
  *

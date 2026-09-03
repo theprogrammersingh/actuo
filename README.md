@@ -26,7 +26,7 @@ a concrete implementation:
 | **JSON Schema inputs** — one definition used by the client *and* validated by the server | `shared/src/tools.ts` |
 | **Dynamic / state-gated tools** — `approve_expense` registers only while you can actually approve something, and fires `toolchange` as that changes | `frontend/src/app/webmcp/tool-session.ts` |
 | **Cancellation** — `generate_report` honours `AbortSignal`; the server abandons the job mid-flight, not just the client | `frontend/src/app/tools/expense-tools.ts`, `backend/src/reports/` |
-| **Cross-origin tools** — the Copilot discovers and calls tools published by an unrelated site | `frontend/src/app/pages/agent/agent.ts`, `frontend/public/partner-demo/` |
+| **Cross-origin tools** — the Copilot discovers and calls tools published by a separately built, independently deployed app Actuo does not own | `frontend/src/app/converter/`, `frontend/src/app/pages/agent/agent.ts` |
 | **Security annotations** — `readOnlyHint` on reads; `untrustedContentHint` where a result carries text a person wrote; mutating tools require in-chat confirmation before they run | `shared/src/tools.ts`, `frontend/src/app/copilot/copilot.ts` |
 
 ### The tools
@@ -63,7 +63,7 @@ dependence is confined to the cross-origin demo.
 
 ```bash
 pnpm install          # pnpm, not npm — see CONTRIBUTING notes in CLAUDE.md
-pnpm run dev          # backend :3000, frontend :4200, partner demo :4201
+pnpm run dev          # backend :3000, frontend :4200
 ```
 
 Open http://localhost:4200 and sign in with a seeded account:
@@ -104,9 +104,13 @@ live log of every tool call.
   `document.modelContext.getTools()`. Sign in as `arjun` instead and it is gone,
   even though the approval queue is not empty — and the API returns 403 either
   way, because the gate is UX and the guard is the boundary.
-- **Cross-origin.** `/agent` embeds Pageturner Books from `localhost:4201`, a
-  page that knows nothing about Actuo. Ask the Copilot what *The Overstory*
-  costs; the tool card carries a `via localhost:4201` badge.
+- **Cross-origin.** `/agent` embeds [Cambiaro](https://cambiaro.programmersingh.dev),
+  a currency converter built and deployed separately, which knows nothing about
+  Actuo beyond the origin it is handed. Ask the Copilot what €80 is in rupees;
+  it calls `convertCurrency` across the origin boundary, the embedded widget
+  moves to that conversion, and the tool card carries a
+  `via cambiaro.programmersingh.dev` badge. The answer is quoted as that site's,
+  with its rate and date — it never becomes an Actuo figure.
 - **Cancellation.** Ask for a report, then press **Stop**. The UI reacts
   immediately and the server abandons the job.
 - **Audit trail.** Settings has two panels and they are not the same thing:
@@ -219,14 +223,17 @@ set to `https://actuo.onrender.com`; change it when a custom domain is attached
 and **redeploy**, because a runtime variable cannot reach already-prerendered
 HTML.
 
-After the first deploy, the one check that matters:
+After any deploy, run the smoke check:
 
 ```bash
-curl -s https://actuo.onrender.com/ | grep -o 'ng-server-context="[^"]*"'
+pnpm run verify:deploy https://actuo.onrender.com
 ```
 
-Empty output means `NG_ALLOWED_HOSTS` does not cover the hostname and Angular has
-silently fallen back to client-side rendering — see *Allowed hosts* below.
+It checks the four things that are only true when the deploy is correct — the API
+answers, `/` actually server-renders, no `__PUBLIC_ORIGIN__` sentinel survives,
+and the converter is configured on another origin — and names the fix for each
+failure. Every check is there because that thing broke in production without
+anything else noticing.
 
 ### Anywhere else
 
@@ -259,16 +266,36 @@ back to client-side rendering, which throws away the SSR and structured-data wor
 on the public pages. `NG_ALLOWED_HOSTS` in `render.yaml` is that list, and it
 *replaces* the build-time list in `angular.json` rather than adding to it.
 
-After any deploy, confirm the HTML for `/` contains `ng-server-context`. If it
-does not, `NG_ALLOWED_HOSTS` does not match your hostname.
+After any deploy, confirm the HTML for `/` contains `ng-server-context` — which
+is what `pnpm run verify:deploy` does. If it does not, `NG_ALLOWED_HOSTS` is not
+reaching the running container. Declaring it in `render.yaml` is not sufficient
+on its own: a service created by hand rather than from the Blueprint never had
+those `envVars` applied, so check the service's own environment first.
 
 ### The cross-origin demo on a deployed URL
 
-The partner page ships inside the app, so on a deploy it is same-origin — which
-proves nothing about *cross*-origin tools, and `/agent` says exactly that rather
-than showing an empty list. To make the demo real on a public URL, host
-`frontend/public/partner-demo/` somewhere else and point `PARTNER_DEMO_ORIGIN` at
-it.
+`CONVERTER_URL` is the base URL the app frames, and it has to be an origin the
+app does not serve — a same-origin page's tools come back marked same-origin,
+the Copilot filters them out, and the surfaces say exactly that rather than
+showing an empty list.
+
+It points at an independently deployed currency converter, which is a real
+second origin and also a real feature. Development uses the same one rather
+than a local stand-in, so there is no configuration that is only exercised in
+production. Two things must both be true for the Copilot to reach its tools:
+
+1. `CONVERTER_URL` is set on the service (it is in `render.yaml`), and
+2. the converter registers its tools with `exposedTo` naming this app's origin.
+
+The second is the one that is easy to miss. A WebMCP tool is visible only to its
+own document unless registration opts in, so the framed page is *told* which
+origin to expose to via the `?actuo=` parameter the app appends. Until it
+honours that, the frame still works by hand and the tool list is honestly empty.
+
+`CONVERTER_URL` defaults to the public converter in development, so the
+cross-origin path works with no setup — at the cost of needing a network. It is
+deliberately *not* defaulted in production: a deploy should name the converter
+it trusts rather than inherit one, and unset the surfaces say so.
 
 ---
 

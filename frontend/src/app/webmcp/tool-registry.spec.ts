@@ -231,14 +231,14 @@ describe('ToolRegistry', () => {
           title: '',
           description: 'List books.',
           inputSchema: JSON.stringify({ type: 'object' }),
-          origin: 'https://partner-demo.app',
+          origin: 'https://cambiaro.programmersingh.dev',
           window: globalThis.window,
         },
       ]),
     });
     const registry = configure(context);
 
-    const tools = await registry.discover({ fromOrigins: ['https://partner-demo.app'] });
+    const tools = await registry.discover({ fromOrigins: ['https://cambiaro.programmersingh.dev'] });
 
     expect(tools).toHaveLength(1);
     expect(tools[0].isCrossOrigin).toBe(true);

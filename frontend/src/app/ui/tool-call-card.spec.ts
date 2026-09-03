@@ -74,8 +74,8 @@ describe('ToolCallCard', () => {
     create();
     expect(text()).not.toContain('via ');
 
-    create({ origin: 'partner-demo.app' });
-    expect(text()).toContain('via partner-demo.app');
+    create({ origin: 'cambiaro.programmersingh.dev' });
+    expect(text()).toContain('via cambiaro.programmersingh.dev');
   });
 
   // §3.2.4 — a mutating call is never executed silently.

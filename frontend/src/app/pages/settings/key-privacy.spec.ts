@@ -15,6 +15,7 @@
  */
 
 import { PLATFORM_ID } from '@angular/core';
+import { provideRouter } from '@angular/router';
 import { TestBed } from '@angular/core/testing';
 import type { Category, Organization, Page, ToolCallLogEntry } from '@actuo/shared';
 
@@ -142,6 +143,9 @@ describe('the Gemini key never reaches Actuo from the settings screens', () => {
     await TestBed.configureTestingModule({
       imports: [component as never],
       providers: [
+        // Settings links to /convert, so RouterLink needs a router to resolve
+        // against. No routes are exercised here; the link just has to render.
+        provideRouter([]),
         { provide: PLATFORM_ID, useValue: 'browser' },
         { provide: ApiClient, useValue: api as unknown as ApiClient },
       ],

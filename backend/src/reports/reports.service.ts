@@ -28,7 +28,7 @@ export interface ReportJob {
  * worker checks between chunks, which is what makes the stop genuine rather than
  * the client merely walking away from a request that keeps running.
  *
- * Jobs live in memory. That is correct for the single-process App Hosting deploy
+ * Jobs live in memory. That is correct for the single-process deploy
  * and for a demo; a multi-instance deployment would need shared storage, and the
  * repository seam is where that would go.
  */

@@ -89,7 +89,7 @@ declarations (see "Why pnpm changes things" below).
 
 ```bash
 pnpm install           # `pnpm install --frozen-lockfile` is the CI equivalent of `npm ci`
-pnpm run dev           # shared, then backend (:3000) + frontend (:4200) + partner demo (:4201)
+pnpm run dev           # shared, then backend (:3000) + frontend (:4200)
 pnpm run build         # shared -> backend -> frontend, in that order
 pnpm test              # backend + frontend unit tests
 pnpm run test:e2e      # backend e2e
@@ -140,7 +140,7 @@ and `pnpm run build` handle the ordering.
 ```
 
 `frontend/` and `backend/` are separate codebases (own package.json, tsconfig, tests)
-that ship as **one** Firebase App Hosting deploy: a single Node process routes
+that ship as **one** deploy — a Docker image on Render: a single Node process routes
 `/api/*` to Nest and everything else to Angular's SSR handler. That process is
 `server.mjs` at the repo root — see "The deploy" below.
 
@@ -215,36 +215,79 @@ the PRD assumes that do **not** hold:
 Two live compatibility traps for any `getTools()` consumer:
 
 1. **`inputSchema` type varies by Chrome version.** Chrome 149–153 (most of the origin-trial
-   population, including the Chrome 152 on this machine) return it as a **serialized JSON
+   population, including the Chrome 151 on this machine) return it as a **serialized JSON
    string**; 154+ returns an object. Branch on `typeof` and guard the parse.
 2. **`title` may be an empty string**, not absent — `tool.title ?? tool.name` silently yields
    `""`. Use `tool.title || tool.name`. `annotations` genuinely may be absent.
 
-**Enabling native WebMCP** (Chrome 152): `chrome://flags/#enable-webmcp-testing`
+**Enabling native WebMCP** (Chrome 151 here): `chrome://flags/#enable-webmcp-testing`
 ("Enables the WebMCP API") and `chrome://flags/#devtools-webmcp-support`, or launch with
 `--enable-blink-features=WebMCP`.
 
-**Both traps are confirmed on this machine, not theoretical.** Driving
-`/partner-demo/` in the local Chrome 152 with WebMCP enabled:
-`getTools()` returned `typeof inputSchema === 'string'` for every tool, and
-`executeTool()` resolved to a JSON **string** rather than an object. `registerTool`
-with `exposedTo`, the `readOnlyHint` annotation, and `executeTool()` all work
-end to end. `parseInputSchema()` and `parseToolResult()` are what keep that
-working — do not "simplify" them away.
+**Both traps are confirmed on this machine, not theoretical.** Re-measured on
+2026-09-03 against the deployed converter (`https://cambiaro.programmersingh.dev`)
+framed from `localhost:4200` in Chrome **151** with WebMCP enabled — a genuine
+origin boundary, not a page this repo serves. `getTools({fromOrigins})` returned
+all seven of its tools with `typeof inputSchema === 'string'`, and
+`executeTool()` resolved to a JSON **string** rather than an object. So
+`registerTool` with `exposedTo`, the `readOnlyHint` annotation, `fromOrigins`
+discovery and `executeTool()` all work end to end across origins.
+`parseInputSchema()` and `parseToolResult()` are what keep that working — do not
+"simplify" them away.
+
+The same run proved the loop closes: `executeTool(convertCurrency, {amount:200,
+from:'EUR', to:'INR'})` returned `200 EUR = 22,018.00 INR (1 EUR = 110.09 INR,
+2 Sep 2026)` **and the embedded widget moved to that conversion** — which is what
+the other side marking those tools as changing its own UI buys. Annotations
+survive the boundary intact: its four answering tools rendered `Read-only` in
+`/agent` and its three UI-moving ones `Mutating`.
 
 **Cross-origin requires native Chrome.** `@mcp-b/webmcp-polyfill` rejects non-empty
 `fromOrigins`/`exposedTo` with `NotSupportedError`, so the polyfill is a same-origin
 fallback only.
 
-**Cross-origin also requires an actual second origin.** The partner page lives in
-`frontend/public/partner-demo/`, so it is *also* served by the app itself — and from
-there `normalizeRegisteredTool()` marks its tools `isCrossOrigin: false`, which is
-exactly the set the Copilot filters out. `scripts/partner-server.mjs` (zero
-dependencies, `node:http`) serves `frontend/public` on **:4201** so the same
-`/partner-demo/` path exists on a different origin; `pnpm run dev` starts it as a
-third pane. The origin the app embeds is `PARTNER_DEMO_ORIGIN`, served to the browser
-by `GET /api/config` — so a deploy changes it without a rebuild. When it equals the
-app's own origin, `/agent` says so instead of showing an empty list.
+**Cross-origin also requires an actual second origin, and it must not be one we
+serve.** A page served by the app is marked `isCrossOrigin: false` by
+`normalizeRegisteredTool()`, which is exactly the set the Copilot filters out.
+This repo used to ship a synthetic partner page (`frontend/public/partner-demo/`)
+plus a static server on :4201 to give it a second origin; both are gone. They
+were only ever true on localhost, and a stand-in exercised in dev but never in
+production is how a path stays broken in one of them unnoticed.
+
+What the app frames is **`CONVERTER_URL`** (it replaced `PARTNER_DEMO_ORIGIN`),
+served to the browser by `GET /api/config` — so a deploy changes it without a
+rebuild. **Development and production now use the same real converter**; the dev
+default is the public one, which costs a network dependency and buys one code
+path instead of two.
+
+It is a **full URL rather than a bare origin** because a converter need not sit
+at the root of its host — a GitHub Pages *project* site is
+`<user>.github.io/<repo>/`, and only a custom domain puts it at `/` — and the
+`?actuo=` handshake is appended to it either way. Consumers derive the origin
+with `new URL(value).origin`; a second "path" variable that had to stay in step
+would be one too many. Non-http(s) values are rejected before the sanitizer
+bypass. When it equals the app's own origin, every surface says so instead of
+showing an empty list. It is deliberately **not** defaulted in production: a
+deploy names the converter it trusts rather than inheriting one.
+
+**The `?actuo=` handshake is what makes any of it work.** A WebMCP tool is
+visible only to its own document unless registration names an origin in
+`exposedTo`, so the framed page has to be *told* which origin to expose to.
+`ConverterSession.frameUrl` appends `?actuo=<our origin>`, and the converter
+reads it and passes it to `registerTool`'s `exposedTo`.
+Sending it at runtime rather than hardcoding our hostname there means a deploy
+URL can change without a release on the other side.
+
+**`ConverterSession` owns the discovery lifecycle, not any page.** It used to
+belong to `/agent`, which was fine while one page framed one other origin. With four
+surfaces, page-owned teardown cleared the Copilot's remote tools while a frame
+was still mounted elsewhere. Two rules live there now: **only one frame at a
+time** (`getTools()` returns a descriptor per *window*, so two live frames
+publish two tools called `convertCurrency`), and **reference-counted discovery**
+(during a route change Angular builds the incoming component before destroying
+the outgoing one, so clear-on-destroy would wipe what the new surface just
+found). `Copilot.discoverRemoteTools()` also dedupes by name now, which fixes
+the same duplicate-window bug wherever a second window publishes the same tools.
 
 ## The deploy
 
@@ -315,20 +358,36 @@ those into build args; on any other host it needs an explicit `--build-arg`. The
 URLs — `<loc>` in the sitemap, `og:image`, `canonical` — must be decided before
 the build finishes. `index.html`, `sitemap.xml` and `robots.txt` carry a
 `__PUBLIC_ORIGIN__` sentinel that survives prerendering into every generated
-file, and `scripts/stamp-seo.mjs` replaces it across `dist/frontend/browser` as
-the last step of `pnpm run build`. Unset, it substitutes `''` and everything
-stays root-relative and valid. It must carry the scheme: the value is
-substituted verbatim, so a bare hostname yields a `<loc>` that is not a URL.
+file, and `scripts/stamp-seo.mjs` replaces it across **the whole
+`dist/frontend` tree** as the last step of `pnpm run build`.
+
+**It must not narrow to `browser/` again.** It did, and the deployed site served
+a literal `__PUBLIC_ORIGIN__` in its `canonical` and `og:image`: Angular keeps
+its own copies of the page HTML under `server/` — `index.server.html` and the
+`assets-chunks/*.mjs` templates, `index_csr_html.mjs` among them — and those are
+what the SSR handler serves. `sitemap.xml` and `robots.txt` looked right the
+whole time because they come from `browser/`, which is what made it hard to see.
+`.mjs` is in the stampable extension set for exactly this reason.
+
+Unset, `PUBLIC_ORIGIN` substitutes `''` and everything stays root-relative and
+valid. It must carry the scheme: the value is substituted verbatim, so a bare
+hostname yields a `<loc>` that is not a URL.
+
+**`pnpm run verify:deploy <url>`** checks the deployed result of all of this —
+`ng-server-context` present, no sentinel surviving, and the converter configured
+on another origin. Local green does not mean deployed correct: SSR fell back to
+CSR in production while every test passed and the page looked fine.
 
 **The service worker must never cache `/api`.** `ngsw-config.json` has no
 `dataGroups` at all, deliberately: a cached response would show stale money and
 would undercut the promise that every read goes through an authenticated route.
-`navigationUrls` also excludes `/partner-demo/**`, which is a separate site that
-re-registers WebMCP tools on each load.
+`navigationUrls` no longer needs a `/partner-demo/**` exclusion — the converter
+is a different origin, which the service worker never sees.
 
-**`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.partnerOrigin`
-drops its `http://localhost:4201` default, because serving that from a deployed
-instance makes `/agent` embed an iframe pointing at each visitor's own machine.
+**`NODE_ENV=production` changes one behaviour on purpose**: `EnvService.converterUrl`
+drops its development default, because a deploy should name the converter it
+trusts through `CONVERTER_URL` rather than silently framing a third party nobody
+chose. Unset, the converter surfaces say so.
 It is set in the runtime stage of the Dockerfile, and deliberately NOT at build
 time — a production-flagged install drops devDependencies, and the build is
 almost entirely devDependencies.
@@ -395,7 +454,7 @@ request; the access token deliberately carries no role claim.
   *human* can make, so it logs itself with the actor `agentInvoked` reports;
   everything else through the registry is an agent.
 - `pages/agent/` — `/agent`, the WebMCP surface made visible: browser support,
-  the cross-origin partner iframe and what it exposed, and the live invocation
+  the cross-origin converter iframe and what it exposed, and the live invocation
   log. The only consumer of `discoveredTools()` and `invocationLog()`.
 
 ## Thought signatures (Gemini 3 function calling)
@@ -460,6 +519,24 @@ The earlier code fell back to the raw `amount`, on the reasoning that a slightly
 wrong number beat a bar reading zero. It was not slightly wrong: a $200 charge
 was counted as ₹200. When a real FX pass starts filling `converted_amount`,
 those rows re-enter every total with no code change.
+
+**The embedded converter does not change this, and must not.** `converter/`
+frames a separate converter app on four surfaces (`/convert`, `/agent`, the
+dashboard's excluded-rows notice, and expense rows in another currency). It is
+advisory: a rate a person reads off another site is not the historical rate
+locked at entry, so nothing it shows may reach `converted_amount`, `sumSpend()`,
+`sumByCategory()`, or the `excludedNotice()` copy.
+
+That is enforced structurally rather than by good intentions:
+`CurrencyConverter` has **no `output()`, no `postMessage` listener, and never
+reads a value back out of the frame**, so no converted figure exists anywhere in
+Actuo's component tree to be wired in. Adding one would mean first inventing a
+return channel — a visible, reviewable act rather than a one-line slip.
+`currency-converter.spec.ts` asserts the component's inputs and outputs
+directly, and the dashboard and expenses specs assert that opening the lookup
+moves no figure. **`core/expense/amount.ts` and its spec were not touched by
+that work**; if a change to the converter needs to edit them, the change is
+wrong.
 
 ## Architectural rules that must not be violated
 

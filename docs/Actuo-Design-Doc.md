@@ -112,7 +112,7 @@ This is the part worth designing most carefully, since it's the whole point of t
    - Expandable to show raw input JSON + result
    - A small colored dot indicating `readOnlyHint` (blue = safe/read-only) vs a mutating action (amber = changed something)
 4. **Sensitive actions** (submit/delete/approve) trigger a native confirmation step **inside the chat itself** — a card with "Confirm" / "Cancel" buttons — never a silent execution.
-5. **Cross-origin calls** get a distinct badge showing the origin the tool came from (e.g. "via partner-demo.app") — this is a great subtle way to make the cross-origin feature *visible* to a judge/demo audience instead of invisible plumbing.
+5. **Cross-origin calls** get a distinct badge showing the origin the tool came from (e.g. "via cambiaro.programmersingh.dev") — this is a great subtle way to make the cross-origin feature *visible* to a judge/demo audience instead of invisible plumbing.
 6. **Cancellable actions** (e.g. report generation) show a progress state with a visible "Stop" button that calls `AbortSignal.abort()` — and the UI should visibly react within ~100ms so cancellation feels real, not decorative.
 
 This tool-call-card pattern effectively turns the Copilot into a live changelog of agent behavior, which is both good UX and a built-in demo script.

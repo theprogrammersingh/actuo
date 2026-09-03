@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
+import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClient } from '../../core/api/api-client.js';
@@ -10,15 +11,17 @@ import type { ToolInvocation } from '../../webmcp/tool-registry.js';
 import { Agent } from './agent.js';
 
 const SELF_ORIGIN = globalThis.location.origin;
-const PARTNER = 'http://localhost:4201';
+/** CONVERTER_URL may carry a path, so the origin is derived from it. */
+const CONVERTER_URL = 'https://cambiaro.example/';
+const CONVERTER_ORIGIN = 'https://cambiaro.example';
 
 function remoteTool(overrides: Partial<NormalizedTool> = {}): NormalizedTool {
   return {
-    name: 'get_book_price',
-    title: 'Get book price',
-    description: 'Return the price of one book by its id.',
+    name: 'convertCurrency',
+    title: 'Convert currency',
+    description: 'Convert an amount from one currency to another.',
     inputSchema: { type: 'object', properties: {} },
-    origin: PARTNER,
+    origin: CONVERTER_ORIGIN,
     annotations: { readOnlyHint: true },
     isCrossOrigin: true,
     raw: {} as NormalizedTool['raw'],
@@ -59,17 +62,20 @@ describe('Agent tools page', () => {
   const text = () => host().textContent ?? '';
   const iframe = () => host().querySelector('iframe');
 
-  /** `null` means "the backend reported no partner origin", not "use the default". */
-  async function create(partnerOrigin: string | null = PARTNER): Promise<void> {
+  /** `null` means "the backend reported no converter", not "use the default". */
+  async function create(converterUrl: string | null = CONVERTER_URL): Promise<void> {
     api.get.mockImplementation((path: string) =>
       path === '/config'
-        ? Promise.resolve(partnerOrigin === null ? {} : { partnerOrigin })
+        ? Promise.resolve(converterUrl === null ? {} : { converterUrl })
         : Promise.reject(new Error(`unexpected ${path}`)),
     );
 
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
+        // The page links to /convert, so RouterLink needs a router to resolve
+        // against. No routes are exercised here; the link just has to render.
+        provideRouter([]),
         { provide: ApiClient, useValue: api },
         { provide: Copilot, useValue: copilot },
         { provide: ToolRegistry, useValue: registry },
@@ -103,21 +109,22 @@ describe('Agent tools page', () => {
      * The dead feature this page revives: `discoverRemoteTools()` existed,
      * worked and was tested, and nothing in the app ever called it.
      */
-    it('asks the configured partner origin for its tools', async () => {
+    it('asks the configured converter origin for its tools', async () => {
       await create();
-      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([PARTNER]);
+      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([CONVERTER_ORIGIN]);
     });
 
-    it('embeds the partner page with the tools permission the spec requires', async () => {
+    it('embeds the converter with the tools permission the spec requires', async () => {
       await create();
 
       const frame = iframe();
       expect(frame).not.toBeNull();
       expect(frame!.getAttribute('allow')).toBe('tools');
-      expect(frame!.getAttribute('src')).toContain(`${PARTNER}/partner-demo/`);
+      expect(frame!.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect(frame!.getAttribute('src')).toContain(CONVERTER_URL);
     });
 
-    it('tells the partner page which origin to expose its tools to', async () => {
+    it('tells the embedded page which origin to expose its tools to', async () => {
       await create();
       expect(iframe()!.getAttribute('src')).toContain(
         `actuo=${encodeURIComponent(SELF_ORIGIN)}`,
@@ -132,17 +139,17 @@ describe('Agent tools page', () => {
       listener();
       await fixture.whenStable();
 
-      // The partner page registers asynchronously after its own load, so the
+      // The converter registers asynchronously after its own load, so the
       // iframe's `load` event can fire before there is anything to find.
-      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([PARTNER]);
+      expect(copilot.discoverRemoteTools).toHaveBeenCalledWith([CONVERTER_ORIGIN]);
     });
 
     it('lists what it discovered, with the origin it came from', async () => {
       copilot.crossOriginTools.set([remoteTool()]);
       await create();
 
-      expect(text()).toContain('get_book_price');
-      expect(text()).toContain('localhost:4201');
+      expect(text()).toContain('convertCurrency');
+      expect(text()).toContain('cambiaro.example');
       expect(text()).toContain('Read-only');
     });
 
@@ -151,29 +158,38 @@ describe('Agent tools page', () => {
      * the Copilot filters every one of them out. Showing an empty list would
      * read as a bug; saying so is the honest failure.
      */
-    it('explains itself instead of pretending, when the partner is same-origin', async () => {
-      await create(SELF_ORIGIN);
+    it('explains itself instead of pretending, when the converter is same-origin', async () => {
+      await create(`${SELF_ORIGIN}/converter/`);
 
       expect(iframe()).toBeNull();
-      expect(text()).toContain('PARTNER_DEMO_ORIGIN');
+      expect(text()).toContain('CONVERTER_URL');
       expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
     });
 
     /**
-     * The deployed default: `PARTNER_DEMO_ORIGIN` is unset in production, on
-     * purpose, because a localhost fallback there would embed an iframe
-     * pointing at each visitor's own machine. An empty card would read as a
-     * bug, so the page has to say what is missing.
+     * The deployed default: `CONVERTER_URL` is unset in production, on purpose,
+     * because a localhost fallback there would embed an iframe pointing at each
+     * visitor's own machine. An empty card would read as a bug, so the page has
+     * to say what is missing.
      */
-    it('explains itself when no partner origin is configured', async () => {
+    it('explains itself when no converter is configured', async () => {
       await create(null);
 
       expect(iframe()).toBeNull();
       expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
-      expect(text()).toContain('No second origin is configured');
-      // Still points at what does exist, and at how to get the real demo.
-      expect(host().querySelector('a[href="/partner-demo/"]')).not.toBeNull();
-      expect(text()).toContain('PARTNER_DEMO_ORIGIN');
+      expect(text()).toContain('No converter is configured');
+      expect(text()).toContain('CONVERTER_URL');
+    });
+
+    /**
+     * A misconfigured variable must not become a `javascript:` frame src. The
+     * scheme check lives in ConverterSession, ahead of the sanitizer bypass.
+     */
+    it('refuses a converter URL that is not http(s)', async () => {
+      await create('javascript:alert(1)');
+
+      expect(iframe()).toBeNull();
+      expect(copilot.discoverRemoteTools).not.toHaveBeenCalled();
     });
 
     /**
@@ -249,7 +265,7 @@ describe('Agent tools page', () => {
 
     it('marks a cross-origin call as one', async () => {
       registry.invocationLog.set([
-        invocation({ toolName: 'get_book_price', origin: 'cross-origin' }),
+        invocation({ toolName: 'convertCurrency', origin: 'cross-origin' }),
       ]);
       await create();
 

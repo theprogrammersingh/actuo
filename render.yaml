@@ -77,9 +77,21 @@ services:
       - key: JWT_REFRESH_SECRET
         sync: false
 
-      # PARTNER_DEMO_ORIGIN is deliberately absent. It must be an origin that is
-      # NOT this app's, or the cross-origin WebMCP demo proves nothing — /agent
-      # explains that when it is unset, rather than rendering an empty card.
+      # The embedded currency converter (PRD §6.5). A full URL, not a bare
+      # origin, because a converter need not sit at the root of its host — a
+      # GitHub Pages project site is `<user>.github.io/<repo>/` — and the
+      # `?actuo=` handshake is appended to it. Consumers derive the origin with
+      # `new URL(...).origin` for `getTools({fromOrigins})`.
+      #
+      # It must NOT be this app's own origin: `getTools({fromOrigins})` would
+      # return same-origin tools, which the Copilot filters out, and the
+      # cross-origin path would prove nothing. Cambiaro is a genuinely separate
+      # deployment, which is the point.
+      #
+      # RUNTIME, unlike PUBLIC_ORIGIN above: nothing about it is prerendered,
+      # so changing it needs a restart rather than a rebuild.
+      - key: CONVERTER_URL
+        value: https://cambiaro.programmersingh.dev/
 
 # PORT is injected by Render and must not be set here. server.mjs reads it and
 # falls back to 8080, and binds 0.0.0.0 so the container is reachable.

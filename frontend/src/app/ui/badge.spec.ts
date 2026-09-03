@@ -66,11 +66,11 @@ describe('Badge', () => {
 
   it('falls back to the explicit tone when no status is given', () => {
     fixture.componentRef.setInput('tone', 'info');
-    fixture.componentRef.setInput('label', 'via partner-demo.app');
+    fixture.componentRef.setInput('label', 'via cambiaro.programmersingh.dev');
     fixture.detectChanges();
 
     expect(fixture.componentInstance.tone()).toBe('info');
-    expect(pill().textContent?.trim()).toBe('via partner-demo.app');
+    expect(pill().textContent?.trim()).toBe('via cambiaro.programmersingh.dev');
   });
 
   it('lets an explicit label override the status label', () => {

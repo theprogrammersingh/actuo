@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import type {
   AuditLogEntry,
   Category,
@@ -45,7 +46,7 @@ const ROLE_COPY: Record<Role, string> = {
 @Component({
   selector: 'app-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AiSettings, Badge, Card, EmptyState, ErrorState, Skeleton],
+  imports: [AiSettings, Badge, Card, EmptyState, ErrorState, RouterLink, Skeleton],
   host: { class: 'block' },
   template: `
     <div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
@@ -82,6 +83,21 @@ const ROLE_COPY: Record<Role, string> = {
               <dd class="mt-1 font-mono text-sm text-body">{{ organization.baseCurrency }}</dd>
             </div>
           </dl>
+
+          <!--
+            Totals are in the base currency and exclude anything filed in
+            another one, so this is the natural place to point at the converter.
+            It is a reference, not a setting: nothing there changes a figure.
+          -->
+          <p class="mt-4 text-sm text-muted">
+            Expenses filed in another currency are not converted into this one.
+            <a
+              routerLink="/convert"
+              class="underline decoration-line underline-offset-2 hover:text-body"
+              >Look up a rate</a
+            >
+            to see what one is worth today.
+          </p>
 
           @if (roleCopy(); as copy) {
             <p class="mt-4 flex items-center gap-2 text-sm text-muted">
