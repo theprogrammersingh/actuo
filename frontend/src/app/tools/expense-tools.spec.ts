@@ -76,6 +76,21 @@ describe('ExpenseTools', () => {
       expect(api.post.mock.calls[1][0]).toBe('/expenses/exp-1/submit');
       expect(result).toMatchObject({ status: 'submitted' });
     });
+
+    it('passes categoryId to the create call', async () => {
+      api.post
+        .mockResolvedValueOnce(expense({ status: 'draft' }))
+        .mockResolvedValueOnce(expense({ status: 'submitted' }));
+
+      await tools.submitExpense().execute(
+        { amount: 450, currency: 'INR', categoryId: 'cat-uuid-1' },
+        { signal: new AbortController().signal },
+      );
+
+      const [, createBody] = api.post.mock.calls[0];
+      expect(createBody.categoryId).toBe('cat-uuid-1');
+      expect(createBody).not.toHaveProperty('category');
+    });
   });
 
   describe('get_budget_status', () => {
@@ -225,6 +240,36 @@ describe('ExpenseTools', () => {
     });
   });
 
+  describe('fetch_categories', () => {
+    it('is annotated read-only and needs no confirmation', () => {
+      const tool = tools.fetchCategories();
+      expect(tool.contract.annotations.readOnlyHint).toBe(true);
+      expect(tool.contract.requiresConfirmation).toBe(false);
+    });
+
+    it('returns categories with id, name, and icon', async () => {
+      api.get.mockResolvedValue([
+        { id: 'cat-1', orgId: 'org-1', name: 'Travel', icon: 'plane', isDefault: true },
+        { id: 'cat-2', orgId: 'org-1', name: 'Meals', icon: 'utensils', isDefault: true },
+      ]);
+
+      const result = await tools.fetchCategories().execute(
+        {},
+        { signal: new AbortController().signal },
+      ) as Array<Record<string, unknown>>;
+
+      expect(api.get).toHaveBeenCalledWith(
+        '/orgs/current/categories',
+        undefined,
+        expect.anything(),
+      );
+      expect(result).toEqual([
+        { id: 'cat-1', name: 'Travel', icon: 'plane' },
+        { id: 'cat-2', name: 'Meals', icon: 'utensils' },
+      ]);
+    });
+  });
+
   describe('approve_expense', () => {
     it('routes to approve or reject based on the decision', async () => {
       api.post.mockResolvedValue(expense({ status: 'approved' }));
@@ -253,6 +298,7 @@ describe('ExpenseTools', () => {
         'get_budget_status',
         'get_spend_summary',
         'generate_report',
+        'fetch_categories',
       ]);
     });
   });

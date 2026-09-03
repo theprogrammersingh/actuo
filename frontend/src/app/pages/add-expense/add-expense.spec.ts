@@ -7,12 +7,18 @@ import { AddExpense } from './add-expense.js';
 
 describe('AddExpense (declarative WebMCP surface)', () => {
   let fixture: ComponentFixture<AddExpense>;
-  let api: { post: ReturnType<typeof vi.fn> };
+  let api: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn> };
   let audit: { record: ReturnType<typeof vi.fn> };
   let session: { refreshPendingApprovals: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    api = { post: vi.fn().mockResolvedValue({ id: 'exp-1', amount: 450, currency: 'INR', merchant: 'Barista', status: 'draft' }) };
+    api = {
+      get: vi.fn().mockResolvedValue([
+        { id: 'cat-1', orgId: 'org-1', name: 'Travel', icon: 'plane', isDefault: true },
+        { id: 'cat-2', orgId: 'org-1', name: 'Meals', icon: 'utensils', isDefault: true },
+      ]),
+      post: vi.fn().mockResolvedValue({ id: 'exp-1', amount: 450, currency: 'INR', merchant: 'Barista', status: 'draft' }),
+    };
     audit = { record: vi.fn() };
     session = { refreshPendingApprovals: vi.fn().mockResolvedValue(0) };
     TestBed.resetTestingModule();
@@ -56,7 +62,7 @@ describe('AddExpense (declarative WebMCP surface)', () => {
   });
 
   it('describes every parameter an agent has to fill', () => {
-    for (const name of ['amount', 'currency', 'merchant', 'expenseDate', 'note']) {
+    for (const name of ['amount', 'currency', 'categoryId', 'merchant', 'expenseDate', 'note']) {
       const control = form().querySelector(`[name="${name}"]`);
       expect(control, `missing control: ${name}`).not.toBeNull();
       expect(
@@ -132,6 +138,36 @@ describe('AddExpense (declarative WebMCP surface)', () => {
 
     await expect(responded!).rejects.toThrow('Amount must be greater than 0');
     expect(fixture.nativeElement.textContent).toContain('Amount must be greater than 0');
+  });
+
+  it('renders a category dropdown populated from the API', async () => {
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const select = form().querySelector('[name="categoryId"]') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    // "None" + 2 categories from the mock
+    expect(select.options.length).toBe(3);
+    expect(select.options[1].textContent?.trim()).toBe('Travel');
+    expect(select.options[1].value).toBe('cat-1');
+  });
+
+  it('includes categoryId in the POST payload', async () => {
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const amount = form().querySelector('[name="amount"]') as HTMLInputElement;
+    amount.value = '450';
+    const select = form().querySelector('[name="categoryId"]') as HTMLSelectElement;
+    select.value = 'cat-1';
+
+    form().dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    await fixture.whenStable();
+
+    expect(api.post).toHaveBeenCalledWith(
+      '/expenses',
+      expect.objectContaining({ categoryId: 'cat-1' }),
+    );
   });
 
   /**

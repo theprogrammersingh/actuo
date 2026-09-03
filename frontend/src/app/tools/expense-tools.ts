@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import {
+  FETCH_CATEGORIES,
   GENERATE_REPORT,
   GET_BUDGET_STATUS,
   GET_SPEND_SUMMARY,
@@ -8,6 +9,7 @@ import {
   APPROVE_EXPENSE,
   type AnalyticsSummary,
   type BudgetStatus,
+  type Category,
   type Expense,
   type ExpensePage,
 } from '@actuo/shared';
@@ -53,7 +55,7 @@ export class ExpenseTools {
     amount: number;
     currency: string;
     merchant?: string;
-    category?: string;
+    categoryId?: string;
     note?: string;
     expenseDate?: string;
   }> {
@@ -176,6 +178,25 @@ export class ExpenseTools {
     };
   }
 
+  /** Read-only lookup for category IDs (PRD §7). */
+  fetchCategories(): ActuoTool<Record<string, never>> {
+    return {
+      contract: FETCH_CATEGORIES,
+      execute: async (_args, { signal }) => {
+        const categories = await this.api.get<Category[]>(
+          '/orgs/current/categories',
+          undefined,
+          signal,
+        );
+        return categories.map((c) => ({
+          id: c.id,
+          name: c.name,
+          icon: c.icon,
+        }));
+      },
+    };
+  }
+
   all(): ActuoTool<never>[] {
     return [
       this.searchExpenses(),
@@ -183,6 +204,7 @@ export class ExpenseTools {
       this.getBudgetStatus(),
       this.getSpendSummary(),
       this.generateReport(),
+      this.fetchCategories(),
     ] as unknown as ActuoTool<never>[];
   }
 
