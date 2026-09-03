@@ -1,16 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NextFunction, Request, Response } from 'express';
-import { canonicalRedirect, requestHost } from './canonical-redirect.js';
+import {
+  canonicalRedirect,
+  isHostAllowed,
+  parseAllowedHosts,
+  requestHost,
+} from './canonical-redirect.js';
 
 const CANONICAL = 'https://actuo.programmersingh.dev';
+
+/** What production runs: both hostnames the service answers on. */
+const ALLOWED = '*.onrender.com,actuo.programmersingh.dev';
 
 function run(
   origin: string | undefined,
   req: { method?: string; url?: string; headers?: Record<string, unknown> },
+  allowedHosts: string | undefined = ALLOWED,
 ) {
   const redirect = vi.fn();
   const next = vi.fn();
-  const middleware = canonicalRedirect(origin);
+  const middleware = canonicalRedirect(origin, allowedHosts);
 
   middleware(
     { method: 'GET', url: '/', headers: {}, ...req } as unknown as Request,
@@ -114,7 +123,7 @@ describe('canonicalRedirect', () => {
 
   it('is a pass-through, and says why, when the origin is not a URL', () => {
     const onDisabled = vi.fn();
-    const middleware = canonicalRedirect('actuo.programmersingh.dev', onDisabled);
+    const middleware = canonicalRedirect('actuo.programmersingh.dev', ALLOWED, onDisabled);
     const next = vi.fn();
 
     middleware(
@@ -143,5 +152,129 @@ describe('canonicalRedirect', () => {
   it('does not redirect when no hostname can be determined', () => {
     const { passedThrough } = run(CANONICAL, { headers: {} });
     expect(passedThrough).toBe(true);
+  });
+});
+
+describe('parseAllowedHosts', () => {
+  it('splits, trims and drops empties, as @angular/ssr does', () => {
+    expect(parseAllowedHosts(' a.example , , b.example ')).toEqual(['a.example', 'b.example']);
+  });
+
+  it('is empty when unset or blank', () => {
+    expect(parseAllowedHosts(undefined)).toEqual([]);
+    expect(parseAllowedHosts('  ')).toEqual([]);
+  });
+});
+
+describe('isHostAllowed', () => {
+  it('matches exactly', () => {
+    expect(isHostAllowed('actuo.programmersingh.dev', ['actuo.programmersingh.dev'])).toBe(true);
+    expect(isHostAllowed('other.programmersingh.dev', ['actuo.programmersingh.dev'])).toBe(false);
+  });
+
+  it('matches a *. entry by suffix, but not the bare apex', () => {
+    expect(isHostAllowed('actuo.onrender.com', ['*.onrender.com'])).toBe(true);
+    // `.slice(1)` leaves '.onrender.com', so the apex has no leading dot to match.
+    expect(isHostAllowed('onrender.com', ['*.onrender.com'])).toBe(false);
+  });
+
+  it('lets * through', () => {
+    expect(isHostAllowed('anything.example', ['*'])).toBe(true);
+  });
+
+  it('rejects everything when the list is empty', () => {
+    expect(isHostAllowed('actuo.programmersingh.dev', [])).toBe(false);
+  });
+});
+
+describe('the allowlist guard', () => {
+  /*
+   * The one misconfiguration that takes the whole site down: the alias 308s to
+   * a host Angular answers 400 for, while /api/health still returns 200 so
+   * Render reports a healthy deploy and never rolls back.
+   */
+  it('refuses to redirect to a host NG_ALLOWED_HOSTS does not cover', () => {
+    const { passedThrough } = run(
+      CANONICAL,
+      { headers: { host: 'actuo.onrender.com' } },
+      '*.onrender.com',
+    );
+
+    // Degraded to "both hosts keep serving" — wrong, but not down.
+    expect(passedThrough).toBe(true);
+  });
+
+  it('says why, naming both values, so the service log explains itself', () => {
+    const onDisabled = vi.fn();
+    canonicalRedirect(CANONICAL, '*.onrender.com', onDisabled);
+
+    expect(onDisabled).toHaveBeenCalledOnce();
+    const reason = onDisabled.mock.calls[0][0] as string;
+    expect(reason).toContain('actuo.programmersingh.dev');
+    expect(reason).toContain('*.onrender.com');
+    expect(reason).toContain('NG_ALLOWED_HOSTS');
+  });
+
+  it('redirects once the canonical host is listed exactly', () => {
+    const { status, redirectedTo } = run(
+      CANONICAL,
+      { headers: { host: 'actuo.onrender.com' } },
+      ALLOWED,
+    );
+
+    expect(status).toBe(308);
+    expect(redirectedTo).toBe('https://actuo.programmersingh.dev/');
+  });
+
+  it('accepts the canonical host via a *. suffix entry', () => {
+    const { status } = run(
+      CANONICAL,
+      { headers: { host: 'actuo.onrender.com' } },
+      '*.onrender.com,*.programmersingh.dev',
+    );
+    expect(status).toBe(308);
+  });
+
+  it('accepts it via *', () => {
+    const { status } = run(CANONICAL, { headers: { host: 'actuo.onrender.com' } }, '*');
+    expect(status).toBe(308);
+  });
+
+  it.each([undefined, '', '   '])(
+    'disables the redirect when NG_ALLOWED_HOSTS is %p',
+    (allowed) => {
+      // Built directly rather than through `run`, whose default parameter would
+      // substitute ALLOWED for an explicit undefined and test nothing.
+      const middleware = canonicalRedirect(CANONICAL, allowed);
+      const next = vi.fn();
+      const redirect = vi.fn();
+
+      middleware(
+        { method: 'GET', url: '/', headers: { host: 'actuo.onrender.com' } } as unknown as Request,
+        { redirect } as unknown as Response,
+        next as unknown as NextFunction,
+      );
+
+      // Angular then allows only angular.json's localhost/127.0.0.1, so the
+      // canonical host would 400 — redirecting to it would be an outage.
+      expect(next).toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is decided once at construction, not per request', () => {
+    const onDisabled = vi.fn();
+    const middleware = canonicalRedirect(CANONICAL, '*.onrender.com', onDisabled);
+
+    for (let i = 0; i < 3; i += 1) {
+      middleware(
+        { method: 'GET', url: '/', headers: { host: 'actuo.onrender.com' } } as unknown as Request,
+        { redirect: vi.fn() } as unknown as Response,
+        vi.fn() as unknown as NextFunction,
+      );
+    }
+
+    // A per-request warning would flood the service log on a misconfigured deploy.
+    expect(onDisabled).toHaveBeenCalledOnce();
   });
 });

@@ -78,7 +78,11 @@ const express = nest.getHttpAdapter().getInstance();
  * second variable that would have to stay in step with it. Unset, the redirect
  * is a pass-through.
  */
-express.use(canonicalRedirect(process.env.PUBLIC_ORIGIN, (why) => console.warn(`[actuo] ${why}`)));
+express.use(
+  canonicalRedirect(process.env.PUBLIC_ORIGIN, process.env.NG_ALLOWED_HOSTS, (why) =>
+    console.warn(`[actuo] ${why}`),
+  ),
+);
 express.use(reqHandler);
 
 // 0.0.0.0, not the default localhost: a container that binds the loopback

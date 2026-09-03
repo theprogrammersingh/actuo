@@ -225,7 +225,10 @@ reach already-prerendered HTML, so a restart is not enough.
 `server.mjs` reads it again at runtime and **308-redirects page requests
 arriving on any other hostname** to it, so the two origins the service answers
 on do not compete as duplicate content. `/api` is never redirected, and neither
-is `localhost`.
+is `localhost`. It also **switches itself off** if `PUBLIC_ORIGIN` names a host
+missing from `NG_ALLOWED_HOSTS` — that pairing would redirect the alias to a
+host Angular answers 400 for, taking every page down while `/api/health` still
+reported healthy.
 
 **The site answers on two hostnames**, and both must be in `NG_ALLOWED_HOSTS`
 (a comma-separated list) or their pages return `400 Bad Request` naming the

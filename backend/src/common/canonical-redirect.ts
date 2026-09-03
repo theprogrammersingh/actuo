@@ -32,6 +32,32 @@ export function requestHost(req: Pick<Request, 'headers'>): string {
 }
 
 /**
+ * `NG_ALLOWED_HOSTS` as a list, parsed the way Angular parses it.
+ *
+ * Mirrors `getArrayFromEnv` in `@angular/ssr`: split on `,`, trim, drop empties.
+ */
+export function parseAllowedHosts(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Whether Angular would serve this hostname — mirrors its `isHostAllowed`.
+ *
+ * `*` allows everything; otherwise an exact match, or a suffix match for a
+ * `*.` entry (`hostname.endsWith('.example.com')`, which deliberately does not
+ * cover the bare apex).
+ */
+export function isHostAllowed(hostname: string, allowedHosts: readonly string[]): boolean {
+  if (allowedHosts.includes('*') || allowedHosts.includes(hostname)) return true;
+  return allowedHosts.some(
+    (entry) => entry.startsWith('*.') && hostname.endsWith(entry.slice(1)),
+  );
+}
+
+/**
  * Drops a trailing `:port`, without mangling an IPv6 literal.
  *
  * A blanket `/:\d+$/` turns `::1` into `:`, which then matches no loopback
@@ -73,6 +99,7 @@ function stripPort(host: string): string {
  */
 export function canonicalRedirect(
   canonicalOrigin: string | undefined,
+  allowedHostsEnv: string | undefined,
   onDisabled?: (reason: string) => void,
 ): (req: Request, res: Response, next: NextFunction) => void {
   let canonical: URL | null = null;
@@ -83,6 +110,39 @@ export function canonicalRedirect(
       canonical = new URL(configured);
     } catch {
       onDisabled?.(`PUBLIC_ORIGIN is not a URL (${configured}); canonical redirect disabled.`);
+    }
+  }
+
+  /*
+   * The guard against the one misconfiguration that takes the whole site down.
+   *
+   * PUBLIC_ORIGIN naming a host that NG_ALLOWED_HOSTS does not cover means the
+   * alias 308s to a host Angular answers 400 for: every page dead, while
+   * `/api/health` still returns 200 so Render reports a healthy deploy and
+   * never rolls back. Refusing to redirect degrades that to "both hosts keep
+   * serving", which is merely wrong rather than down.
+   *
+   * This re-implements Angular's matcher, and that duplication is safe in one
+   * direction only — which is the direction that matters. The check can only
+   * ever DISABLE a redirect: if it drifts and wrongly says "allowed" the
+   * behaviour is what it would have been without the guard at all, and if it
+   * wrongly says "not allowed" the site still serves on every host. It cannot
+   * make anything worse than not having it. Angular's own list stays the
+   * authority on what gets served; this only decides whether to redirect.
+   *
+   * An unset NG_ALLOWED_HOSTS lands here too, correctly: Angular then allows
+   * only angular.json's localhost/127.0.0.1, so a canonical host would 400.
+   */
+  if (canonical) {
+    const allowedHosts = parseAllowedHosts(allowedHostsEnv);
+    if (!isHostAllowed(canonical.hostname, allowedHosts)) {
+      onDisabled?.(
+        `PUBLIC_ORIGIN host "${canonical.hostname}" is not covered by NG_ALLOWED_HOSTS ` +
+          `(${allowedHostsEnv?.trim() || 'unset'}); canonical redirect disabled. ` +
+          'Redirecting to a host Angular answers 400 for would take every page down. ' +
+          'Add it to NG_ALLOWED_HOSTS to enable the redirect.',
+      );
+      canonical = null;
     }
   }
 

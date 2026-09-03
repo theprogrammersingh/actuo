@@ -417,6 +417,20 @@ hostname to `PUBLIC_ORIGIN`. Four things about it are load-bearing:
 - **GET/HEAD only, and never loopback**, or `node server.mjs` locally would
   bounce to production.
 
+**It refuses to run when `PUBLIC_ORIGIN`'s host is not in `NG_ALLOWED_HOSTS`**,
+and that guard is the reason the two variables can be changed independently.
+Without it, moving `PUBLIC_ORIGIN` to a host the allowlist does not cover makes
+the alias 308 to a host Angular answers 400 for — **every page dead**, while
+`/api/health` still returns 200 so Render reports a healthy deploy and never
+rolls back. Refusing degrades that to "both hosts keep serving", and the service
+log names both values.
+
+`isHostAllowed`/`parseAllowedHosts` duplicate Angular's matcher, which is safe in
+the only direction that matters: the check can *only* disable a redirect. Drift
+that wrongly says "allowed" leaves the behaviour it would have had anyway; drift
+that wrongly says "not allowed" still serves every host. Angular's list stays the
+authority on what is served — this decides only whether to redirect.
+
 It lives under `backend/` because that is the only workspace with a test runner
 that can reach it; `server.mjs` imports it from `dist` exactly as it already
 imports `createNestApp`.

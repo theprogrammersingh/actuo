@@ -287,7 +287,7 @@ and the offline banner appearing and clearing on the network events.
 | Unit tests for tool `execute()` | ✅ | — |
 | Structured logging / error tracking | ⬜ | Nest logger only; no Sentry-tier reporting |
 | **CI** | ✅ | `.github/workflows/ci.yml` runs the full Definition of Done gate on push and PR, and **has run on GitHub** — five successful runs, most recently on PR #4 |
-| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts`. It also mounts `common/canonical-redirect.ts`, which 308s pages on any non-canonical hostname — placed after Nest so `/api` can never reach it, and before the Angular handler so it also covers the static files that skip Angular's host check |
+| Single-process deploy | ✅ | `server.mjs`; the routing contract it depends on is pinned by `routing-contract.e2e-spec.ts`. It also mounts `common/canonical-redirect.ts`, which 308s pages on any non-canonical hostname — placed after Nest so `/api` can never reach it, and before the Angular handler so it also covers the static files that skip Angular's host check. It self-disables when `PUBLIC_ORIGIN`'s host is not in `NG_ALLOWED_HOSTS`, because that combination would 308 the alias to a host Angular 400s: every page down behind a health check that still returns 200 |
 
 ## §12 Submission criteria — 🟡
 
