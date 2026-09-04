@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiClient } from '../core/api/api-client.js';
+import { ReportDownload } from '../core/reports/report-download.js';
 import { ExpenseTools } from './expense-tools.js';
 
 function expense(overrides: Record<string, unknown> = {}) {
@@ -22,12 +23,19 @@ describe('ExpenseTools', () => {
     patch: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
   };
+  let downloads: { save: ReturnType<typeof vi.fn> };
   let tools: ExpenseTools;
 
   beforeEach(() => {
     api = { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() };
+    downloads = { save: vi.fn() };
     TestBed.resetTestingModule();
-    TestBed.configureTestingModule({ providers: [{ provide: ApiClient, useValue: api }] });
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiClient, useValue: api },
+        { provide: ReportDownload, useValue: downloads },
+      ],
+    });
     tools = TestBed.inject(ExpenseTools);
   });
 
@@ -227,16 +235,76 @@ describe('ExpenseTools', () => {
       expect(api.post).toHaveBeenCalledWith('/reports/job-1/cancel');
     });
 
-    it('returns the report location once the job is ready', async () => {
+    /**
+     * The URL is withheld on purpose. Handing the model a path into an
+     * authenticated route is what produced a chat link that 401'd on click; the
+     * job id plus a preview is what both the download button and a headless
+     * agent can actually use.
+     */
+    it('returns the job id and a preview, never the download URL', async () => {
       api.post.mockResolvedValue({ jobId: 'job-1' });
-      api.get.mockResolvedValue({ status: 'ready', url: '/reports/job-1.csv', rows: 12 });
+      api.get.mockResolvedValue({
+        status: 'ready',
+        url: '/api/reports/job-1/download',
+        rows: 12,
+        filename: 'actuo-expenses-2026-08-01_2026-08-28.csv',
+        preview: 'date,merchant,amount,currency,status',
+        previewTruncated: false,
+      });
 
       const result = await tools.generateReport().execute(
         { from: '2026-08-01', to: '2026-08-28' },
         { signal: new AbortController().signal },
       );
 
-      expect(result).toEqual({ url: '/reports/job-1.csv', rows: 12 });
+      expect(result).toEqual({
+        jobId: 'job-1',
+        rows: 12,
+        filename: 'actuo-expenses-2026-08-01_2026-08-28.csv',
+        preview: 'date,merchant,amount,currency,status',
+        previewTruncated: false,
+      });
+      expect(result).not.toHaveProperty('url');
+    });
+  });
+
+  describe('download_report', () => {
+    const run = (jobId: string) =>
+      tools.downloadReport().execute({ jobId }, { signal: new AbortController().signal });
+
+    /**
+     * A file lands on the user's machine, so the card must show the amber
+     * "changes data" dot. No confirmation: asking to download is the
+     * confirmation, and a second click would be friction the user did not ask
+     * for.
+     */
+    it('is annotated as mutating but needs no confirmation', () => {
+      const tool = tools.downloadReport();
+      expect(tool.contract.annotations.readOnlyHint).toBe(false);
+      expect(tool.contract.requiresConfirmation).toBe(false);
+    });
+
+    it('saves the job it was given and reports the filename back', async () => {
+      downloads.save.mockResolvedValue({ filename: 'actuo-expenses-2026-08-01_2026-08-31.csv' });
+
+      const result = await run('job-1');
+
+      expect(downloads.save).toHaveBeenCalledWith('job-1');
+      expect(result).toEqual({
+        jobId: 'job-1',
+        filename: 'actuo-expenses-2026-08-01_2026-08-31.csv',
+      });
+    });
+
+    /**
+     * Report jobs live in the server's memory. A failure has to reach the model
+     * as a failure — answering with a filename for a save that never happened
+     * is the one outcome worse than an error.
+     */
+    it('propagates a failure instead of reporting a save that did not happen', async () => {
+      downloads.save.mockRejectedValue(new Error('Report job not found'));
+
+      await expect(run('job-gone')).rejects.toThrow('Report job not found');
     });
   });
 
@@ -298,6 +366,7 @@ describe('ExpenseTools', () => {
         'get_budget_status',
         'get_spend_summary',
         'generate_report',
+        'download_report',
         'fetch_categories',
       ]);
     });

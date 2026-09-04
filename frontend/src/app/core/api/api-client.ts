@@ -48,12 +48,54 @@ export class ApiClient {
     return this.request<T>('DELETE', path, undefined, signal);
   }
 
+  /**
+   * Fetch a file, with the session token attached.
+   *
+   * This exists because the token lives in memory and travels in a header: a
+   * plain browser navigation to an `/api/*` route sends no `Authorization` and
+   * comes back 401, so a downloadable file cannot be a link the user clicks. It
+   * has to be fetched here and handed to `saveBlob()`.
+   *
+   * Deliberately NOT routed through `request()`: that parses the body as JSON
+   * first, and a single-column numeric CSV would parse into a number.
+   */
+  async download(path: string, signal?: AbortSignal): Promise<DownloadedFile> {
+    const response = await this.send('GET', path, undefined, signal);
+
+    if (!response.ok) {
+      const payload = await readBody(response);
+      throw new ApiError(extractMessage(payload, response.statusText), response.status, payload);
+    }
+
+    return {
+      blob: await response.blob(),
+      filename: filenameFromDisposition(response.headers.get('Content-Disposition')),
+    };
+  }
+
   private async request<T>(
     method: string,
     path: string,
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<T> {
+    const response = await this.send(method, path, body, signal);
+    const payload = await readBody(response);
+
+    if (!response.ok) {
+      throw new ApiError(extractMessage(payload, response.statusText), response.status, payload);
+    }
+
+    return payload as T;
+  }
+
+  /** The one place the prefix, the bearer header and the SSR guard live. */
+  private send(
+    method: string,
+    path: string,
+    body: unknown,
+    signal: AbortSignal | undefined,
+  ): Promise<Response> {
     // During SSR there is no session, so data calls are skipped rather than
     // rendered against an unauthenticated backend.
     if (!this.isBrowser) {
@@ -65,20 +107,30 @@ export class ApiClient {
     const token = this.token();
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const response = await fetch(`/api${path}`, {
+    return fetch(`/api${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     });
+  }
+}
 
-    const payload = await readBody(response);
+export interface DownloadedFile {
+  blob: Blob;
+  /** From Content-Disposition; null when the server named no file. */
+  filename: string | null;
+}
 
-    if (!response.ok) {
-      throw new ApiError(extractMessage(payload, response.statusText), response.status, payload);
-    }
-
-    return payload as T;
+/** Reads the `filename="..."` (or bare `filename=`) parameter, if present. */
+function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]).trim() || null;
+  } catch {
+    return match[1].trim() || null;
   }
 }
 

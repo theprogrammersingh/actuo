@@ -131,4 +131,55 @@ describe('ToolCallCard', () => {
     expect(text()).toContain('Cancelled');
     expect(text()).not.toContain('Failed');
   });
+
+  /**
+   * A file behind an authenticated route cannot be a link, so a completed call
+   * that produced one offers a button instead. Generic: the card is told the
+   * label, it does not know what a report is.
+   */
+  describe('download', () => {
+    it('offers no download unless a label is supplied', () => {
+      create({ state: 'done' });
+      expect(text()).not.toContain('Download');
+    });
+
+    it('offers none while the call is still running', () => {
+      create({ state: 'running', downloadLabel: 'Download CSV (12 rows)' });
+      expect(text()).not.toContain('Download CSV');
+    });
+
+    it('emits when the download button is pressed', () => {
+      create({ state: 'done', downloadLabel: 'Download CSV (12 rows)' });
+      let emitted = 0;
+      fixture.componentInstance.download.subscribe(() => (emitted += 1));
+
+      const button = [...fixture.nativeElement.querySelectorAll('button')].find(
+        (element: HTMLButtonElement) => element.textContent?.includes('Download CSV'),
+      ) as HTMLButtonElement;
+      button.click();
+
+      expect(emitted).toBe(1);
+    });
+
+    it('disables itself and says so while downloading', () => {
+      create({ state: 'done', downloadLabel: 'Download CSV (12 rows)', downloading: true });
+
+      const button = [...fixture.nativeElement.querySelectorAll('button')].find(
+        (element: HTMLButtonElement) => element.textContent?.includes('Downloading'),
+      ) as HTMLButtonElement;
+
+      expect(button.disabled).toBe(true);
+      expect(text()).not.toContain('Download CSV (12 rows)');
+    });
+
+    // A failure has to be readable, not signalled by colour alone.
+    it('shows a failure as visible copy', () => {
+      create({
+        state: 'done',
+        downloadLabel: 'Download CSV (12 rows)',
+        downloadError: 'Report job not found',
+      });
+      expect(text()).toContain('Report job not found');
+    });
+  });
 });

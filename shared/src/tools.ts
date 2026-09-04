@@ -146,7 +146,10 @@ export const GENERATE_REPORT: ActuoToolContract = {
   name: 'generate_report',
   title: 'Generate an expense report',
   description:
-    'Generate a CSV expense report for a date range. Long-running; can be cancelled while in progress.',
+    'Generate a CSV expense report for a date range. Long-running; can be cancelled while in progress. ' +
+    'Returns the row count and a preview of the first rows, not the whole file and not a link: the full ' +
+    'CSV is offered to the user as a download button on this tool call. Never write, offer, or invent a ' +
+    'download URL — report the row count and say the download is on the card.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -160,6 +163,41 @@ export const GENERATE_REPORT: ActuoToolContract = {
     additionalProperties: false,
   },
   annotations: { readOnlyHint: true },
+  requiresConfirmation: false,
+};
+
+/**
+ * Save a generated report to the user's device.
+ *
+ * This exists because a file cannot reach disk any other way from a client that
+ * can only call tools. The download route needs the session bearer header, so
+ * there is no URL an agent — or the user clicking a link in chat — could fetch.
+ * A tool's `execute()` runs inside the page, in the authenticated session, so
+ * the page does the fetch and hands the blob to the browser on the agent's
+ * behalf. That makes it work for the in-page Copilot and for any third-party
+ * WebMCP client alike.
+ *
+ * Not read-only: a file lands on the user's machine. It carries no confirmation
+ * because the user asking to download is the confirmation, and the tool call
+ * card still shows it happening.
+ */
+export const DOWNLOAD_REPORT: ActuoToolContract = {
+  name: 'download_report',
+  title: 'Download a generated report',
+  description:
+    'Save a report that generate_report has already produced to the user\'s device. Call this ' +
+    'whenever the user asks to download, save, export, or get the file. Requires the jobId that ' +
+    'generate_report returned — if no report has been generated yet, call generate_report first and ' +
+    'pass its jobId here. Returns the filename that was saved, so you can name it to the user.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      jobId: { type: 'string', description: 'The jobId returned by generate_report.' },
+    },
+    required: ['jobId'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false },
   requiresConfirmation: false,
 };
 
@@ -221,6 +259,7 @@ export const ALWAYS_ON_TOOLS: readonly ActuoToolContract[] = [
   GET_BUDGET_STATUS,
   GET_SPEND_SUMMARY,
   GENERATE_REPORT,
+  DOWNLOAD_REPORT,
   FETCH_CATEGORIES,
 ] as const;
 

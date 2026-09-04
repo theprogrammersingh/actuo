@@ -77,6 +77,45 @@ describe('ReportsService', () => {
     expect(job.content?.split('\n')).toHaveLength(41); // header + 40 rows
   });
 
+  it('names the file after the range it covers', async () => {
+    const { service } = createService();
+    const { jobId } = service.start(USER, { from: '2026-08-01', to: '2026-08-31' });
+
+    await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('ready'), { timeout: 5000 });
+
+    expect(service.get(USER, jobId).filename).toBe('actuo-expenses-2026-08-01_2026-08-31.csv');
+  });
+
+  /**
+   * The preview is what an agent with no UI gets instead of a download URL it
+   * cannot authenticate. Bounded, and it says so when it is bounded — a
+   * truncated report presented as a whole one is the same confident wrong
+   * answer the paging fix above exists to prevent.
+   */
+  it('carries a bounded preview that admits when it is truncated', async () => {
+    const { service } = createService();
+    const { jobId } = service.start(USER, { from: '2026-08-01', to: '2026-08-31' });
+
+    await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('ready'), { timeout: 5000 });
+
+    const job = service.get(USER, jobId);
+    const lines = job.preview?.split('\n') ?? [];
+    expect(lines[0]).toBe('date,merchant,amount,currency,status');
+    expect(lines).toHaveLength(21); // header + 20 of the 40 rows
+    expect(job.previewTruncated).toBe(true);
+  });
+
+  it('does not claim truncation when every row fits the preview', async () => {
+    const { service } = createService(pagedList(5));
+    const { jobId } = service.start(USER, { from: '2026-08-01', to: '2026-08-31' });
+
+    await vi.waitFor(() => expect(service.get(USER, jobId).status).toBe('ready'), { timeout: 5000 });
+
+    const job = service.get(USER, jobId);
+    expect(job.previewTruncated).toBe(false);
+    expect(job.preview).toBe(job.content);
+  });
+
   /**
    * The point of the whole feature: Stop must actually stop the work, not just
    * detach the client from a job that keeps running to completion.

@@ -29,6 +29,7 @@ describe('ToolSession (state-gated approve_expense)', () => {
   it('publishes the always-on tools on start', async () => {
     await session.start();
     expect([...registry.registeredNames()].sort()).toEqual([
+      'download_report',
       'fetch_categories',
       'generate_report',
       'get_budget_status',
