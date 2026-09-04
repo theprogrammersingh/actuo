@@ -84,7 +84,7 @@ export const SUBMIT_EXPENSE: ActuoToolContract = {
   name: 'submit_expense',
   title: 'Submit an expense',
   description:
-    'Create an expense and submit it for approval. Use when the user describes a purchase they want recorded. If the user mentions a category, call fetch_categories first to get the categoryId.',
+    'Create an expense and submit it for approval. Use when the user describes a purchase they want recorded. If the user mentions a category, call fetch_categories first to get the categoryId. This opens the Add expense page and fills the form in front of the user, so tell them where they are going.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -220,6 +220,160 @@ export const FETCH_CATEGORIES: ActuoToolContract = {
 };
 
 /**
+ * Where an agent may send the browser (PRD §7).
+ *
+ * Each `description` is written for a model, not for a person: it says what is
+ * *on* the page, so an agent reading `getTools()` learns the shape of the app
+ * without visiting a single route. That is the point of the tool — an agent
+ * driving Actuo from outside otherwise has to read the DOM and guess where to
+ * click, which is slow and breaks on any markup change.
+ *
+ * `frontend/src/app/tools/navigate-destinations-contract.spec.ts` pins this
+ * list against the real router config in both directions, so a new gated page
+ * cannot ship undescribed and an entry here cannot outlive its route.
+ */
+export interface AppDestination {
+  /** The value the model passes as `destination`. */
+  id: string;
+  /** Router path, leading slash included. */
+  path: string;
+  /** What is on that page. */
+  description: string;
+}
+
+export const APP_DESTINATIONS: readonly AppDestination[] = [
+  {
+    id: 'dashboard',
+    path: '/dashboard',
+    description:
+      "This month's spend, pace against budget, the 14-day trend, the pending-approval count, and recent activity.",
+  },
+  {
+    id: 'expenses',
+    path: '/expenses',
+    description:
+      'The full expense list with search and status filters, and the per-row submit, approve and reject actions.',
+  },
+  {
+    id: 'add',
+    path: '/add',
+    description: 'The quick-entry form for filing a new expense.',
+  },
+  {
+    id: 'budgets',
+    path: '/budgets',
+    description: 'Per-category budgets and how much of each is used this period.',
+  },
+  {
+    id: 'convert',
+    path: '/convert',
+    description:
+      'The embedded currency converter, for looking up a European Central Bank rate. Advisory only: it changes no Actuo figure.',
+  },
+  {
+    id: 'agent',
+    path: '/agent',
+    description:
+      'The WebMCP surface: the tools this page publishes, the tools it discovered on other origins, and a log of every tool call.',
+  },
+  {
+    id: 'settings',
+    path: '/settings',
+    description:
+      "Profile, the organization's base currency, theme, and the user's own Gemini API key.",
+  },
+] as const;
+
+/** The destination list, flattened into one line the model reads in the schema. */
+const DESTINATION_GUIDE = APP_DESTINATIONS.map((d) => `${d.id} — ${d.description}`).join(' ');
+
+/**
+ * Move the browser (PRD §7).
+ *
+ * The one tool here whose entire effect is on the viewport. It exists for
+ * agents that drive the app from outside: without it, "show me my budgets"
+ * means reading the DOM and guessing which element to click.
+ *
+ * **Not `readOnlyHint`.** It reads and writes no data, but it changes what the
+ * user is looking at, and a client deciding whether to announce an action
+ * should be told that. It is the same category the embedded converter's own
+ * UI-moving tools sit in, which `/agent` renders as `Mutating`.
+ *
+ * No confirmation: navigation is trivially reversible and touches no money.
+ * `requiresConfirmation` is for things that move money or change approval state.
+ */
+export const NAVIGATE_TO: ActuoToolContract = {
+  name: 'navigate_to',
+  title: 'Go to a page',
+  description:
+    "Move the browser to one of Actuo's pages. Use it when the user asks to see or go to a screen, " +
+    'or when what they want is something they need to be looking at — a form to fill in, a chart to ' +
+    'read. It only changes what is displayed and returns no expense data, so never call it to answer ' +
+    'a question; use the read tools for that. Returns the path actually landed on, which can differ ' +
+    'from the one asked for if the session has expired.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      destination: {
+        type: 'string',
+        enum: APP_DESTINATIONS.map((d) => d.id),
+        description: `Which page to open. ${DESTINATION_GUIDE}`,
+      },
+    },
+    required: ['destination'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false },
+  requiresConfirmation: false,
+};
+
+/**
+ * Set or change a category's budget (PRD §6.3).
+ *
+ * A person cannot change a budget without going to the Budgets page and using
+ * the form there, and neither can an agent: this drives that form. The route
+ * (`POST /budgets`, `PATCH /budgets/:id`) and the form both already existed —
+ * only the tool was missing, which meant an agent could *read* a budget with
+ * `get_budget_status` and never touch one.
+ *
+ * Mutating and confirmed: it changes a spending limit, which is the same bar
+ * `submit_expense` clears. Owners and admins only, enforced server-side.
+ */
+export const SET_BUDGET: ActuoToolContract = {
+  name: 'set_budget',
+  title: 'Set a budget',
+  description:
+    'Set or change the monthly budget for a category, or the organization-wide budget. ' +
+    'Call fetch_categories first to get the categoryId. Creates the budget if none exists ' +
+    'and updates it otherwise. Owners and admins only. This opens the Budgets page and fills ' +
+    'the form in front of the user, so tell them where they are going.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      categoryId: {
+        type: 'string',
+        description:
+          'Category UUID from fetch_categories. Omit for the organization-wide budget.',
+      },
+      amount: {
+        type: 'number',
+        minimum: 0,
+        description: 'The monthly limit, in the organization base currency.',
+      },
+      rollover: {
+        type: 'boolean',
+        default: false,
+        description: 'Whether unused budget carries into the next month.',
+      },
+    },
+    required: ['amount'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false },
+  requiresConfirmation: true,
+};
+
+/**
  * State-gated (PRD §7): only registered when the signed-in user is an
  * admin/owner AND at least one expense is awaiting approval. Registration and
  * unregistration fire `toolchange`.
@@ -228,7 +382,7 @@ export const APPROVE_EXPENSE: ActuoToolContract = {
   name: 'approve_expense',
   title: 'Approve or reject an expense',
   description:
-    'Approve or reject a submitted expense. Only available to admins and owners while items are pending.',
+    'Approve or reject a submitted expense. Only available to admins and owners while items are pending. This opens the Expenses page and acts on the row in front of the user.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -261,6 +415,8 @@ export const ALWAYS_ON_TOOLS: readonly ActuoToolContract[] = [
   GENERATE_REPORT,
   DOWNLOAD_REPORT,
   FETCH_CATEGORIES,
+  NAVIGATE_TO,
+  SET_BUDGET,
 ] as const;
 
 export const ALL_TOOL_CONTRACTS: readonly ActuoToolContract[] = [

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiClient } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
 import { ToolCallAudit } from '../../webmcp/tool-call-audit.js';
+import { PageActions } from '../../webmcp/page-actions.js';
 import { AddExpense } from './add-expense.js';
 
 describe('AddExpense (declarative WebMCP surface)', () => {
@@ -221,5 +222,143 @@ describe('AddExpense (declarative WebMCP surface)', () => {
     form().dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     await fixture.whenStable();
     expect(api.post).toHaveBeenCalled();
+  });
+
+  /**
+   * The `submit_expense` tool navigates here and hands the values over rather
+   * than posting behind the page — so the user watches the same form they
+   * would have filled themselves being filled.
+   */
+  describe('as the page that performs submit_expense', () => {
+    /** Zero stagger: these tests have no interest in watching it type. */
+    function agentFill() {
+      (fixture.componentInstance as unknown as { fillStaggerMs: number }).fillStaggerMs = 0;
+      const run = TestBed.inject(PageActions);
+      return run.awaitHandler('submit_expense', new AbortController().signal);
+    }
+
+    it('offers the action while it is mounted, and withdraws it on destroy', () => {
+      const pages = TestBed.inject(PageActions);
+      expect(pages.has('submit_expense')).toBe(true);
+
+      fixture.destroy();
+
+      expect(pages.has('submit_expense')).toBe(false);
+    });
+
+    it('fills the visible form before saving anything', async () => {
+      /*
+       * Sampled at the moment of the save, not after: a successful save calls
+       * `form.reset()`, so by the time the promise settles the fields are
+       * legitimately empty again. What matters is that the DOM the user is
+       * looking at held the values before anything was posted.
+       */
+      const onScreen: Record<string, string> = {};
+      api.post.mockImplementation((path: string) => {
+        if (path === '/expenses') {
+          for (const name of ['amount', 'currency', 'merchant', 'expenseDate', 'note']) {
+            const field = form().elements.namedItem(name) as HTMLInputElement | null;
+            onScreen[name] = field?.value ?? '';
+          }
+        }
+        return Promise.resolve({
+          id: 'exp-1',
+          amount: 450,
+          currency: 'INR',
+          merchant: 'Barista',
+          status: 'submitted',
+          expenseDate: '2026-09-04',
+        });
+      });
+
+      const run = await agentFill();
+      await run(
+        {
+          amount: 450,
+          currency: 'INR',
+          merchant: 'Barista',
+          expenseDate: '2026-09-04',
+          note: 'Team coffee',
+        } as never,
+        { signal: new AbortController().signal },
+      );
+
+      expect(onScreen).toMatchObject({
+        amount: '450',
+        currency: 'INR',
+        merchant: 'Barista',
+        expenseDate: '2026-09-04',
+        note: 'Team coffee',
+      });
+    });
+
+    /**
+     * `submit_expense` has always meant create *and* send for approval. The
+     * form on its own only creates a draft, so the transition has to happen too
+     * or the tool would quietly start doing less than it says.
+     */
+    it('creates the expense and then submits it for approval', async () => {
+      api.post
+        .mockResolvedValueOnce({ id: 'exp-1', amount: 450, currency: 'INR', status: 'draft' })
+        .mockResolvedValueOnce({
+          id: 'exp-1',
+          amount: 450,
+          currency: 'INR',
+          merchant: 'Barista',
+          status: 'submitted',
+          expenseDate: '2026-09-04',
+        });
+
+      const run = await agentFill();
+      const result = await run({ amount: 450, currency: 'INR' } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(api.post.mock.calls[0][0]).toBe('/expenses');
+      expect(api.post.mock.calls[1][0]).toBe('/expenses/exp-1/submit');
+      expect(result).toMatchObject({ id: 'exp-1', status: 'submitted' });
+    });
+
+    /**
+     * LOAD-BEARING. The form's own `onSubmit` stamps the audit row
+     * `actor: agentInvoked ? 'agent' : 'human'`, and a synthetic submit carries
+     * no `agentInvoked` — so driving the form through `requestSubmit()` would
+     * file the agent's work as a person's. That flag is the only thing in the
+     * app that can produce `actor: 'human'`, and the audit viewer's
+     * human/agent contrast is built on it. `ToolRegistry` already logs this
+     * call as `submit_expense`.
+     */
+    it('never files the agent’s work as a human action', async () => {
+      api.post.mockResolvedValue({
+        id: 'exp-1',
+        amount: 450,
+        currency: 'INR',
+        status: 'submitted',
+      });
+
+      const run = await agentFill();
+      await run({ amount: 450, currency: 'INR' } as never, {
+        signal: new AbortController().signal,
+      });
+
+      const actors = audit.record.mock.calls.map((call) => call[0].actor);
+      expect(actors).not.toContain('human');
+    });
+
+    it('re-polls the approval queue it just added to', async () => {
+      api.post.mockResolvedValue({
+        id: 'exp-1',
+        amount: 450,
+        currency: 'INR',
+        status: 'submitted',
+      });
+
+      const run = await agentFill();
+      await run({ amount: 450, currency: 'INR' } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(session.refreshPendingApprovals).toHaveBeenCalled();
+    });
   });
 });

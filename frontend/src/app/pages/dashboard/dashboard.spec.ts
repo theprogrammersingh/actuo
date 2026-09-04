@@ -275,14 +275,19 @@ describe('Dashboard', () => {
      * "click here to include them". The copy has to carry that, so it is
      * asserted rather than left to drift.
      */
-    describe('the rate lookup beside it', () => {
-      it('offers a lookup that says it will not change the total', async () => {
+    describe('the rate lookup below it', () => {
+      /** The converter reaches the page a tick after the resource does. */
+      async function withConverter(expenses = MIXED): Promise<void> {
         api.get.mockImplementation(
-          respond({ expenses: MIXED, converterUrl: 'https://cambiaro.example/' }),
+          respond({ expenses, converterUrl: 'https://cambiaro.example/' }),
         );
         await create();
         await settle();
         await settle();
+      }
+
+      it('points at the lookup in copy that says it will not change the total', async () => {
+        await withConverter();
 
         expect(text()).toContain("this won't change the total");
       });
@@ -298,31 +303,55 @@ describe('Dashboard', () => {
       });
 
       /**
-       * LOAD-BEARING. Opening the lookup must not move a figure on this page.
-       * See CLAUDE.md, "Money: never add two currencies".
+       * The frame is what publishes the cross-origin `convertCurrency` tool,
+       * and a tool lives only as long as the document that registered it — so
+       * a converter nobody has clicked open is a Copilot that cannot convert.
+       * This page is where people land, so it opens on arrival.
        */
-      it('leaves the total and the notice exactly as they were', async () => {
-        api.get.mockImplementation(
-          respond({ expenses: MIXED, converterUrl: 'https://cambiaro.example/' }),
-        );
+      it('opens the frame on arrival, with no click', async () => {
+        await withConverter();
+
+        const frame = find('iframe') as HTMLIFrameElement | null;
+        expect(frame).not.toBeNull();
+        expect(frame!.getAttribute('allow')).toBe('tools');
+      });
+
+      /** One mount only: two frames would publish `convertCurrency` twice. */
+      it('mounts exactly one converter', async () => {
+        await withConverter();
+
+        expect(findAll('app-currency-converter').length).toBe(1);
+        expect(findAll('iframe').length).toBe(1);
+      });
+
+      it('renders no converter card when none is configured', async () => {
+        api.get.mockImplementation(respond({ expenses: MIXED }));
         await create();
         await settle();
         await settle();
 
-        const tileOf = () =>
-          findAll('ui-stat-card')
-            .find((card) => card.textContent?.includes('This month'))
-            ?.textContent?.trim();
-        const before = tileOf();
+        expect(findAll('iframe').length).toBe(0);
+        expect(text()).not.toContain('Currency converter');
+      });
 
-        const trigger = findAll('button').find((b) =>
-          (b.textContent ?? '').includes("won't change the total"),
-        ) as HTMLButtonElement | undefined;
-        expect(trigger).toBeDefined();
-        trigger!.click();
-        await settle();
+      /**
+       * LOAD-BEARING. The lookup must not move a figure on this page.
+       * See CLAUDE.md, "Money: never add two currencies".
+       *
+       * The converter is open on arrival now, so this is asserted directly
+       * rather than across a click: with the frame on screen, every figure
+       * reads exactly what it reads with no converter configured at all.
+       */
+      it('leaves the total and the notice exactly as they were', async () => {
+        await withConverter();
+        expect(find('iframe')).not.toBeNull();
 
-        expect(tileOf()).toBe(before);
+        const tile = findAll('ui-stat-card').find((card) =>
+          card.textContent?.includes('This month'),
+        );
+        // Still 1000, not 1350 — the same figure the converter-less case gives.
+        expect(tile?.textContent).toContain('1,000');
+        expect(tile?.textContent).not.toContain('1,350');
         expect(text()).toContain('2 expenses in other currencies');
       });
     });

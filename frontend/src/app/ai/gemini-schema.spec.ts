@@ -286,6 +286,8 @@ describe('toGeminiSchema', () => {
         'generate_report',
         'download_report',
         'fetch_categories',
+        'navigate_to',
+        'set_budget',
         'approve_expense',
       ]);
       for (const declaration of declarations) {

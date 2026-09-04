@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
+import { PageActions } from '../../webmcp/page-actions.js';
 import { Expenses } from './expenses.js';
 
 function expense(overrides: Partial<Expense> = {}): Expense {
@@ -837,6 +838,98 @@ describe('Expenses workflow actions', () => {
 
       expect(tableRows()).toHaveLength(1);
       expect(text()).not.toContain('Barista');
+    });
+  });
+
+  /**
+   * `approve_expense` navigates here and hands the decision over, so the
+   * decision runs through `run()` — the same path the row's own buttons use.
+   */
+  describe('as the page that performs approve_expense', () => {
+    function handler() {
+      return TestBed.inject(PageActions).awaitHandler(
+        'approve_expense',
+        new AbortController().signal,
+      );
+    }
+
+    it('offers the action while mounted and withdraws it on destroy', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      const pages = TestBed.inject(PageActions);
+      expect(pages.has('approve_expense')).toBe(true);
+
+      fixture.destroy();
+
+      expect(pages.has('approve_expense')).toBe(false);
+    });
+
+    it('decides through the same route the row button posts to', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+
+      const run = await handler();
+      await run({ expenseId: 'a', decision: 'approved' } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(api.post).toHaveBeenCalledWith('/expenses/a/approve', {});
+    });
+
+    it('passes a rejection comment through', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      api.post.mockResolvedValue(expense({ id: 'a', status: 'rejected' }));
+
+      const run = await handler();
+      await run({ expenseId: 'a', decision: 'rejected', comment: 'no receipt' } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(api.post).toHaveBeenCalledWith('/expenses/a/reject', { comment: 'no receipt' });
+    });
+
+    /**
+     * LOAD-BEARING. `run()` patches the row in place; reloading would throw
+     * away every `Load more` page and the scroll position, which is exactly
+     * what the button path avoids and why `patched` exists at all.
+     */
+    it('updates the visible row without refetching the list', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      const loadsBefore = api.get.mock.calls.length;
+
+      const run = await handler();
+      await run({ expenseId: 'a', decision: 'approved' } as never, {
+        signal: new AbortController().signal,
+      });
+      fixture.detectChanges();
+
+      expect(api.get.mock.calls.length).toBe(loadsBefore);
+      expect(text()).toContain('Approved');
+    });
+
+    it('reports a refusal instead of claiming the decision landed', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      api.post.mockRejectedValue(new ApiError('Forbidden', 403, null));
+
+      const run = await handler();
+
+      await expect(
+        run({ expenseId: 'a', decision: 'approved' } as never, {
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow();
+    });
+
+    /** An agent can name a row from a search that reaches past what is loaded. */
+    it('fetches a row that is not on the loaded page', async () => {
+      await create([expense({ id: 'a', status: 'submitted', userId: OTHER })]);
+      api.get.mockResolvedValue(expense({ id: 'z', status: 'submitted', userId: OTHER }));
+
+      const run = await handler();
+      await run({ expenseId: 'z', decision: 'approved' } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(api.get).toHaveBeenCalledWith('/expenses/z', undefined, expect.anything());
+      expect(api.post).toHaveBeenCalledWith('/expenses/z/approve', {});
     });
   });
 });

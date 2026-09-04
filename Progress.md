@@ -151,7 +151,7 @@ their own expense.
 | Original + converted amounts stored | 1 | ✅ | Columns exist. `core/expense/amount.ts` owns the rule: `sumSpend()` adds only base-currency rows and reports the rest |
 | Live FX + daily cache | 1 | ✅ | `backend/src/fx/` reads ECB rates from `api.frankfurter.dev` and caches them in `fx_rates` (migration `0003`). Keyed on the date *asked for*, not the date the rate is from, or every weekend lookup would miss forever; the only entry that can go stale is today's while it still stands in for an earlier day. `FxService.rateOn` returns `null` rather than throwing, so an unreachable publisher cannot stop an expense being filed |
 | Historical rate lock | 1 | ✅ | `expenses.fx_rate` + `fx_rate_date`, written with `converted_amount` at the expense's own date. **`fx_rate_date` is not `expense_date`** — the ECB publishes once per working day, so a Saturday expense locks Friday's rate, and the row prints the rate's own date. An edit re-locks on amount, currency *or* date. Verified live: AWS filed 2026-08-29 (a Saturday) carries the 2026-08-28 rate |
-| Embedded converter (advisory) | 1 | ✅ | `converter/currency-converter.ts` frames a separate converter app on `/convert`, `/agent`, the dashboard notice and foreign-currency expense rows. One frame at a time, lazily mounted, `CONVERTER_URL` from `GET /api/config` |
+| Embedded converter (advisory) | 1 | ✅ | `converter/currency-converter.ts` frames a separate converter app on `/convert`, `/agent`, a dashboard card and foreign-currency expense rows. `/convert` and the dashboard open on arrival — the dashboard because a cross-origin tool lives only as long as the document that registered it, so a collapsed frame on the landing screen means the Copilot cannot convert until someone clicks. One frame at a time, `CONVERTER_URL` from `GET /api/config` |
 
 > **The exclusion rules were what made FX cheap to land.** `sumSpend()` returns
 > `{total, excluded}` and `sumByCategory()` returns `unconverted` — a row counts
@@ -235,7 +235,10 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | Aspect | Status | Notes |
 |---|---|---|
 | Declarative API (annotated form) | ✅ | Add Expense: `toolname`/`tooldescription`/`toolparamdescription`/`toolautosubmit`, `agentInvoked` + `respondWith`, **no JS registration** |
-| Imperative `registerTool` | ✅ | Six tools, per-tool `AbortController` lifetime |
+| Imperative `registerTool` | ✅ | Eight tools, per-tool `AbortController` lifetime |
+| **Writes drive the visible page** | ✅ | `submit_expense`, `approve_expense` and `set_budget` navigate to the page that owns the action and hand the work to it, so the user watches it happen — the form fills field by field, the row's badge changes in place, the budget bar moves. `page-driven-tools.ts` injects no `ApiClient`, so there is no path back to posting behind the page. Rendezvous in `webmcp/page-actions.ts` |
+| **Budget editing** | ✅ | `set_budget` creates or updates through the Budgets form. The route (`POST`/`PATCH /budgets`) and the form both already existed; only the tool was missing, so an agent could read a budget and never change one |
+| **Agent navigation** | ✅ | `navigate_to` moves the browser between the seven authenticated pages, so an agent driving Actuo from outside does not have to read the DOM and guess where to click. Its enum descriptions are the map of the app, read straight off `getTools()`. `APP_DESTINATIONS` is pinned against the real router config in both directions by `tools/navigate-destinations-contract.spec.ts` |
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
 | **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
@@ -246,6 +249,20 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 
 > Open question: `generate_report` is annotated `readOnlyHint: true` but creates a
 > server-side job. Defensible, but decide it deliberately.
+
+Before this, every tool posted straight to `/api/*` and nothing on screen
+moved: `ToolRegistry.observe()` refreshes only `Session.pendingApprovals`, whose
+only consumer is `ToolSession` gating a tool, and every page's `resource()`
+`params` is signal-free so nothing could re-trigger a load. An agent approving
+an expense left the user looking at a row that still read "Submitted".
+
+`navigate_to` is deliberately **not** `readOnlyHint`: it reads and writes no
+data, but it changes what the user is looking at, and that is what the flag
+tells a client. It is the same category the embedded converter's own UI-moving
+tools sit in, which `/agent` already renders as `Mutating`. The one consequence
+is that `app.ts` exempts it by name from the pending-approval re-poll every
+other mutating tool triggers — navigation cannot change the queue, and an agent
+walking the app would otherwise fire a search per hop.
 
 `download_report` is the companion tool that saves a finished report to disk. It
 exists because a file has no other route out for a client that can only call

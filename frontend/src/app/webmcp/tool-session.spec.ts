@@ -34,7 +34,9 @@ describe('ToolSession (state-gated approve_expense)', () => {
       'generate_report',
       'get_budget_status',
       'get_spend_summary',
+      'navigate_to',
       'search_expenses',
+      'set_budget',
       'submit_expense',
     ]);
   });

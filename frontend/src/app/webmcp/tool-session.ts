@@ -1,6 +1,8 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
 import { APPROVE_EXPENSE, type Role } from '@actuo/shared';
 import { ExpenseTools } from '../tools/expense-tools.js';
+import { NavigationTools } from '../tools/navigation-tools.js';
+import { PageDrivenTools } from '../tools/page-driven-tools.js';
 import { ToolRegistry } from './tool-registry.js';
 
 /**
@@ -19,6 +21,8 @@ import { ToolRegistry } from './tool-registry.js';
 export class ToolSession {
   private readonly registry = inject(ToolRegistry);
   private readonly tools = inject(ExpenseTools);
+  private readonly navigation = inject(NavigationTools);
+  private readonly pageDriven = inject(PageDrivenTools);
 
   private readonly role = signal<Role | null>(null);
   private readonly pendingApprovals = signal(0);
@@ -36,7 +40,7 @@ export class ToolSession {
       const isExposed = this.registry.has(APPROVE_EXPENSE.name);
 
       if (shouldExpose && !isExposed) {
-        void this.registry.register(this.tools.approveExpense());
+        void this.registry.register(this.pageDriven.approveExpense());
       } else if (!shouldExpose && isExposed) {
         this.registry.unregister(APPROVE_EXPENSE.name);
       }
@@ -46,7 +50,11 @@ export class ToolSession {
   /** Publish the always-on tools. Safe to call more than once. */
   async start(): Promise<void> {
     if (this.started()) return;
-    for (const tool of this.tools.all()) {
+    for (const tool of [
+      ...this.tools.all(),
+      ...this.navigation.all(),
+      ...this.pageDriven.all(),
+    ]) {
       await this.registry.register(tool);
     }
     this.started.set(true);

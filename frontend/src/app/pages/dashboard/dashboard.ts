@@ -2,6 +2,7 @@ import { isPlatformBrowser } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  type OnInit,
   PLATFORM_ID,
   computed,
   inject,
@@ -167,33 +168,50 @@ const PACE_LABEL: Record<PaceStatus, string> = {
           <p class="mt-3 text-xs text-muted" role="status">{{ note }}</p>
 
           <!--
-            The converter is offered here because this is where the question
-            forms, but the copy has to work hard: looking up a rate does NOT
-            make these rows count, and a bare "Convert currencies" next to an
-            exclusion notice reads exactly like "click here to include them".
-            Say what it does and what it does not.
+            The converter itself sits below, but the pointer belongs beside the
+            notice because this is where the question forms — and the copy has
+            to work hard: looking up a rate does NOT make these rows count, and
+            a bare "Convert currencies" next to an exclusion notice reads
+            exactly like "click here to include them". Say what it does and
+            what it does not.
           -->
           @if (converter.isAvailable()) {
-            <button
-              type="button"
-              class="mt-2 text-xs text-muted underline decoration-line underline-offset-2 hover:text-body"
-              [attr.aria-expanded]="converter.isOpen(converterSurface)"
-              (click)="converter.toggle(converterSurface)"
-            >
-              {{
-                converter.isOpen(converterSurface)
-                  ? 'Hide the rate lookup'
-                  : "Look up today's rate — this won't change the total"
-              }}
-            </button>
+            <p class="mt-2 text-xs text-muted">
+              The rate lookup below is a reference — this won't change the total.
+            </p>
+          }
+        }
 
-            <div class="mt-3">
+        <!--
+          ONE converter mount for this page, open on arrival.
+
+          Two mounts would be two frames, and getTools() returns a descriptor
+          per *window* — two windows publishing convertCurrency is exactly the
+          duplicate the expenses page documents at length. So the pointer above
+          points here rather than rendering a second one.
+
+          It opens rather than offering a trigger because this is the screen
+          people land on, and a cross-origin tool lives only as long as the
+          document that registered it: collapsed, the Copilot cannot convert
+          anything until someone thinks to click.
+        -->
+        @if (converter.isAvailable()) {
+          <div class="mt-6">
+            <ui-card>
+              <header uiCardHeader class="mb-3">
+                <h2 class="text-sm font-semibold text-body">Currency converter</h2>
+                <p class="mt-1 text-xs text-muted">
+                  A separate app on its own origin, embedded here — the Copilot can drive it
+                  through the tools it publishes.
+                </p>
+              </header>
+
               <app-currency-converter
                 [surface]="converterSurface"
                 title="Currency converter — rate lookup"
               />
-            </div>
-          }
+            </ui-card>
+          </div>
         }
 
         <div class="mt-6 grid gap-4 lg:grid-cols-5">
@@ -268,7 +286,7 @@ const PACE_LABEL: Record<PaceStatus, string> = {
     </section>
   `,
 })
-export class Dashboard {
+export class Dashboard implements OnInit {
   private readonly api = inject(ApiClient);
   private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 
@@ -344,12 +362,7 @@ export class Dashboard {
     () => totalForMonth(this.expenses(), this.window.previousMonth).total,
   );
 
-  /**
-   * How many rows on this page could not be totalled, across the whole fetched
-   * window — which is exactly what the tiles and the trend report on. One
-   * notice for the screen beats repeating the caveat on every tile.
-   */
-  /** Owns the single converter frame; the trigger below is one of four. */
+  /** Owns the single converter frame; this page is one of four surfaces. */
   protected readonly converter = inject(ConverterSession);
 
   /** This mount point's id. See `ConverterSession.open`. */
@@ -357,16 +370,31 @@ export class Dashboard {
 
   constructor() {
     /*
-     * Resolve the converter's config up front. The rate-lookup trigger is gated
-     * on `isAvailable()`, and the frame that would otherwise load that config
-     * only mounts once the trigger is shown — so without this the gate could
-     * never open. The session caches it, so this is one request per session
-     * however many surfaces ask.
+     * Resolve the converter's config up front. The card is gated on
+     * `isAvailable()`, and the frame that would otherwise load that config only
+     * mounts once the card is shown — so without this the gate could never
+     * open. The session caches it, so this is one request per session however
+     * many surfaces ask.
      */
     void this.converter.ensureConfig();
   }
 
+  ngOnInit(): void {
+    /*
+     * Open on arrival, the way `/convert` does. This is the screen people land
+     * on, and a cross-origin tool lives exactly as long as the document that
+     * registered it — collapsed, the Copilot has no `convertCurrency` until
+     * someone thinks to click. `ConverterSession` is a radio group, so this
+     * also closes the frame wherever else it was open.
+     */
+    this.converter.open(this.converterSurface);
+  }
 
+  /**
+   * How many rows on this page could not be totalled, across the whole fetched
+   * window — which is exactly what the tiles and the trend report on. One
+   * notice for the screen beats repeating the caveat on every tile.
+   */
   protected readonly excludedNote = computed(() =>
     excludedNotice(sumSpend(this.expenses()).excluded),
   );

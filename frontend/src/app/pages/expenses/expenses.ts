@@ -2,13 +2,14 @@ import { isPlatformBrowser } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   PLATFORM_ID,
   computed,
   inject,
   resource,
   signal,
 } from '@angular/core';
-import { EXPENSE_PAGE_MAX } from '@actuo/shared';
+import { APPROVE_EXPENSE, EXPENSE_PAGE_MAX } from '@actuo/shared';
 import type { Expense, Page, TransitionAction } from '@actuo/shared';
 
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
@@ -18,6 +19,7 @@ import { expenseAmount, expenseCurrency, isConverted } from '../../core/expense/
 import { CurrencyConverter } from '../../converter/currency-converter.js';
 import { ConverterSession } from '../../converter/converter-session.js';
 import { Session } from '../../core/session/session.js';
+import { PageActions } from '../../webmcp/page-actions.js';
 import {
   ACTION_LABEL,
   actionPath,
@@ -187,7 +189,11 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
             </thead>
             <tbody class="divide-y divide-line">
               @for (row of rows(); track row.id) {
-                <tr class="transition-colors duration-150 ease-out hover:bg-surface">
+                <!-- The id is what an agent-driven decision scrolls to. -->
+                <tr
+                  [attr.data-expense-row]="row.id"
+                  class="transition-colors duration-150 ease-out hover:bg-surface"
+                >
                   <td class="tabular px-4 py-3 whitespace-nowrap text-muted">
                     {{ formatDate(row.expenseDate) }}
                   </td>
@@ -311,7 +317,7 @@ const PAGE_SIZE = EXPENSE_PAGE_MAX;
         <!-- Phone: stacked cards, never a sideways scroll (§3.1). -->
         <ul class="space-y-3 md:hidden">
           @for (row of rows(); track row.id) {
-            <li class="rounded-xl border border-line bg-card p-4">
+            <li [attr.data-expense-row]="row.id" class="rounded-xl border border-line bg-card p-4">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                   <p class="truncate font-medium text-body">{{ row.merchant || 'Untitled' }}</p>
@@ -522,6 +528,9 @@ export class Expenses {
   /** Owns the single converter frame across every surface. */
   protected readonly converter = inject(ConverterSession);
 
+  private readonly pages = inject(PageActions);
+  private readonly destroyRef = inject(DestroyRef);
+
   constructor() {
     /*
      * Resolve the converter's config up front. The rate-lookup trigger is gated
@@ -531,6 +540,68 @@ export class Expenses {
      * however many surfaces ask.
      */
     void this.converter.ensureConfig();
+
+    /*
+     * This page owns `approve_expense`. The tool navigates here and hands the
+     * decision over, so it runs through `run()` — the same path the row's own
+     * buttons use, which patches the visible row rather than reloading.
+     */
+    this.destroyRef.onDestroy(
+      this.pages.provide(APPROVE_EXPENSE.name, (args: DecisionArgs, { signal }) =>
+        this.decideFromAgent(args, signal),
+      ),
+    );
+  }
+
+  /**
+   * Approve or reject on behalf of an agent, through the visible row.
+   *
+   * Deliberately no `data.reload()`: `run()` patches the row in place, and a
+   * reload would discard every `Load more` page and the scroll position for the
+   * same reason the button path avoids it.
+   */
+  private async decideFromAgent(args: DecisionArgs, signal: AbortSignal): Promise<unknown> {
+    const action: TransitionAction = args.decision === 'approved' ? 'approve' : 'reject';
+
+    /*
+     * The row is usually already on screen, but an agent can name an expense
+     * from a search that reaches past the loaded page. Fetching the one row is
+     * cheaper and less disruptive than paging until it turns up.
+     */
+    const target =
+      this.rows().find((row) => row.id === args.expenseId) ??
+      (await this.api.get<Expense>(`/expenses/${args.expenseId}`, undefined, signal));
+
+    this.scrollRowIntoView(target.id);
+    await this.run(target, action, args.comment ?? '');
+
+    const rowError = this.rowError();
+    if (rowError?.id === target.id) throw new Error(rowError.message);
+
+    const updated = this.patched()[target.id] ?? target;
+    return {
+      id: updated.id,
+      amount: updated.amount,
+      currency: updated.currency,
+      merchant: updated.merchant,
+      status: updated.status,
+      date: updated.expenseDate,
+    };
+  }
+
+  /**
+   * Put the row the agent is about to act on where the user can see it.
+   *
+   * Feature-detected rather than assumed: scrolling is a courtesy, and a
+   * decision must not fail because a row is off screen or because the host has
+   * no layout to scroll (the test environment, and prerendering).
+   */
+  private scrollRowIntoView(id: string): void {
+    if (!this.isBrowser) return;
+    const row = document.querySelector(`[data-expense-row="${id}"]`);
+    if (row && typeof row.scrollIntoView === 'function') {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
   }
 
   /** Row id with an action in flight, so its buttons can show a busy state. */
@@ -875,3 +946,9 @@ function describeFailure(error: unknown, action: TransitionAction | 'delete'): s
   }
   return `Could not ${verb} this expense. Nothing was changed.`;
 }
+
+type DecisionArgs = {
+  expenseId: string;
+  decision: string;
+  comment?: string;
+};
