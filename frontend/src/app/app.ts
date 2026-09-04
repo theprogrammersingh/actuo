@@ -54,7 +54,14 @@ const NAV: NavItem[] = [
           aria-label="Main"
         >
           <div class="mb-6 flex items-center gap-2">
-            <span class="bg-brand-teal size-7 rounded-lg" aria-hidden="true"></span>
+            <img
+              src="/icons/icon-96x96.png"
+              alt=""
+              width="28"
+              height="28"
+              class="size-7 rounded-lg"
+              aria-hidden="true"
+            />
             <span class="font-display text-lg">Actuo</span>
           </div>
 
