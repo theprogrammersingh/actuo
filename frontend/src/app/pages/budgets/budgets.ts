@@ -2,6 +2,7 @@ import { isPlatformBrowser } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   PLATFORM_ID,
   computed,
   effect,
@@ -9,10 +10,13 @@ import {
   resource,
   signal,
 } from '@angular/core';
+import { SET_BUDGET } from '@actuo/shared';
 import type { Budget, BudgetStatus, Category } from '@actuo/shared';
 
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
+import { PageActions } from '../../webmcp/page-actions.js';
+import { AGENT_FILL_STAGGER_MS, agentPause } from '../../core/agent/fill-pacing.js';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, ProgressBar, Skeleton } from '../../ui';
 import { formatMoney } from '../../core/format/money.js';
 import { excludedNotice } from '../../core/expense/amount.js';
@@ -329,10 +333,81 @@ export class Budgets {
     return 'Set a budget';
   });
 
+  private readonly pages = inject(PageActions);
+  private readonly destroyRef = inject(DestroyRef);
+
+  /** Overridden to 0 in tests, which have no interest in watching it fill. */
+  protected fillStaggerMs = AGENT_FILL_STAGGER_MS;
+
   constructor() {
     // Categories only matter to someone who can set a budget, and only in the
     // browser — `ApiClient` refuses to run during SSR.
     if (this.isBrowser) void this.loadCategories();
+
+    /*
+     * This page owns `set_budget`. A person cannot change a budget without
+     * coming here and using this form, so neither does an agent: the tool
+     * navigates here and hands the values over, and the form fills and saves in
+     * front of the user.
+     */
+    this.destroyRef.onDestroy(
+      this.pages.provide(SET_BUDGET.name, (args: SetBudgetArgs) => this.setFromAgent(args)),
+    );
+  }
+
+  /**
+   * Fill the visible form with an agent's values and save it.
+   *
+   * Routed through `commit()`, which is exactly what the Save button calls, so
+   * the validation, the success message and the bar reload are the same ones a
+   * person gets. Waiting for the categories keeps the `<select>` from showing a
+   * blank while the agent's choice is already set.
+   */
+  private async setFromAgent(args: SetBudgetArgs): Promise<unknown> {
+    if (this.existing().length === 0 && this.categories().length === 0) {
+      await this.loadCategories();
+    }
+
+    const categoryId = args.categoryId ?? null;
+    const existing = this.existing().find((b) => (b.categoryId ?? null) === categoryId);
+
+    // Editing and creating are different requests; `startEdit` is what tells
+    // the form (and `commit`) which one this is.
+    if (existing) this.startEdit(existing);
+    else {
+      this.editingBudget.set(null);
+      this.newCategoryId.set(categoryId ?? '');
+    }
+
+    this.newAmount.set(String(args.amount));
+    this.rollover.set(args.rollover ?? existing?.rollover ?? false);
+
+    /*
+     * Let the filled form reach the screen before saving it. Without this the
+     * fill and the save land in the same frame, so there is no frame in which
+     * the user sees what the agent chose — which is the whole reason this goes
+     * through the form instead of posting behind it.
+     */
+    await agentPause(this.fillStaggerMs);
+
+    await this.commit();
+
+    /*
+     * `commit()` reports two different refusals: the amount check writes
+     * `amountError` and returns without ever calling the API, while a rejected
+     * request sets `formFailed`. Both have to reach the agent as errors, or a
+     * budget that was never saved comes back looking saved.
+     */
+    const refusal = this.amountError() ?? (this.formFailed() ? this.formMessage() : null);
+    if (refusal) throw new Error(refusal);
+
+    const saved = this.existing().find((b) => (b.categoryId ?? null) === categoryId);
+    return {
+      categoryId,
+      amount: saved?.amount ?? args.amount,
+      rollover: saved?.rollover ?? args.rollover ?? false,
+      created: !existing,
+    };
   }
 
   private async loadCategories(): Promise<void> {
@@ -385,6 +460,16 @@ export class Budgets {
 
   protected async saveBudget(event: Event): Promise<void> {
     event.preventDefault();
+    await this.commit();
+  }
+
+  /**
+   * Save whatever the form currently holds.
+   *
+   * Split out of `saveBudget` so the agent-driven path and the Save button are
+   * the same code: the only thing the button adds is `preventDefault()`.
+   */
+  private async commit(): Promise<void> {
     this.formMessage.set(null);
     this.amountError.set(null);
 
@@ -570,3 +655,9 @@ function describeBudgetFailure(error: unknown, isUpdate = false): string {
     ? 'That budget could not be updated. Nothing was changed.'
     : 'That budget could not be saved. Nothing was changed.';
 }
+
+type SetBudgetArgs = {
+  categoryId?: string;
+  amount: number;
+  rollover?: boolean;
+};

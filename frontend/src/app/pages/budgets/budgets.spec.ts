@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiClient, ApiError } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
+import { PageActions } from '../../webmcp/page-actions.js';
 import { Budgets } from './budgets.js';
 
 function budget(overrides: Partial<BudgetStatus> = {}): BudgetStatus {
@@ -252,7 +253,11 @@ describe('Budgets', () => {
  * advice to add the first budget could not be followed from anywhere in the app.
  */
 describe('Budgets — setting one', () => {
-  let api: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn> };
+  let api: {
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+    patch?: ReturnType<typeof vi.fn>;
+  };
   let session: { role: ReturnType<typeof signal<string | null>> };
   let fixture: ComponentFixture<Budgets>;
   /** Budget rows the org already has; drives which categories are offered. */
@@ -463,5 +468,135 @@ describe('Budgets — setting one', () => {
     await create();
 
     expect(form()).not.toBeNull();
+  });
+
+  /**
+   * A person cannot change a budget without coming here and using this form,
+   * so `set_budget` does not either: the tool navigates here and hands the
+   * values over, and they go out through `commit()` — the same code the Save
+   * button runs.
+   */
+  describe('as the page that performs set_budget', () => {
+    /** Zero stagger: these tests have no interest in watching it fill. */
+    function handler() {
+      (fixture.componentInstance as unknown as { fillStaggerMs: number }).fillStaggerMs = 0;
+      return TestBed.inject(PageActions).awaitHandler(
+        'set_budget',
+        new AbortController().signal,
+      );
+    }
+
+    it('offers the action while mounted and withdraws it on destroy', async () => {
+      await create('owner');
+      const pages = TestBed.inject(PageActions);
+      expect(pages.has('set_budget')).toBe(true);
+
+      fixture.destroy();
+
+      expect(pages.has('set_budget')).toBe(false);
+    });
+
+    it('creates a budget for a category that has none', async () => {
+      await create('owner');
+
+      const run = await handler();
+      await run({ categoryId: 'cat-travel', amount: 20000 } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(api.post).toHaveBeenCalledWith('/budgets', {
+        categoryId: 'cat-travel',
+        amount: 20000,
+        period: 'monthly',
+        rollover: false,
+      });
+    });
+
+    /** Creating and updating are different requests; the form decides which. */
+    it('updates the existing budget rather than creating a second one', async () => {
+      existingBudgets = [
+        { id: 'b-travel', categoryId: 'cat-travel', amount: 5000, rollover: false },
+      ];
+      api.patch = vi.fn().mockResolvedValue({ id: 'b-travel' });
+      await create('owner');
+
+      const run = await handler();
+      await run({ categoryId: 'cat-travel', amount: 20000 } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(api.patch).toHaveBeenCalledWith('/budgets/b-travel', {
+        amount: 20000,
+        rollover: false,
+      });
+      expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it('treats an omitted category as the organization-wide budget', async () => {
+      await create('owner');
+
+      const run = await handler();
+      await run({ amount: 100000 } as never, { signal: new AbortController().signal });
+
+      expect(api.post).toHaveBeenCalledWith('/budgets', {
+        categoryId: null,
+        amount: 100000,
+        period: 'monthly',
+        rollover: false,
+      });
+    });
+
+    it('fills the visible form on the way, so the change is watchable', async () => {
+      await create('owner');
+      /*
+       * Sampled at the moment of the save. `detectChanges()` here stands in for
+       * the render Angular performs during the pause between filling the form
+       * and committing it.
+       */
+      let onScreen: string | undefined;
+      api.post.mockImplementation(() => {
+        fixture.detectChanges();
+        onScreen = amountInput()?.value;
+        return Promise.resolve({ id: 'b1' });
+      });
+
+      const run = await handler();
+      await run({ categoryId: 'cat-travel', amount: 20000 } as never, {
+        signal: new AbortController().signal,
+      });
+
+      expect(onScreen).toBe('20000');
+    });
+
+    /**
+     * The route is `@Roles('owner','admin')`. A member's call must come back as
+     * the refusal the form already words, not as a silent no-op the model would
+     * report as success.
+     */
+    it('reports a refusal instead of claiming the budget was saved', async () => {
+      await create('owner');
+      api.post.mockRejectedValue(new ApiError('Forbidden', 403, null));
+
+      const run = await handler();
+
+      await expect(
+        run({ categoryId: 'cat-travel', amount: 20000 } as never, {
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('rejects an amount the form itself would refuse', async () => {
+      await create('owner');
+
+      const run = await handler();
+
+      await expect(
+        run({ categoryId: 'cat-travel', amount: 0 } as never, {
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toThrow();
+      expect(api.post).not.toHaveBeenCalled();
+    });
   });
 });

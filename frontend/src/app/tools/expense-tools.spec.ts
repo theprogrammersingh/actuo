@@ -62,45 +62,6 @@ describe('ExpenseTools', () => {
     });
   });
 
-  describe('submit_expense', () => {
-    it('is flagged as requiring confirmation, since it moves money', () => {
-      const tool = tools.submitExpense();
-      expect(tool.contract.requiresConfirmation).toBe(true);
-      expect(tool.contract.annotations.readOnlyHint).toBe(false);
-    });
-
-    it('creates then submits, and defaults the date to today', async () => {
-      api.post
-        .mockResolvedValueOnce(expense({ status: 'draft' }))
-        .mockResolvedValueOnce(expense({ status: 'submitted' }));
-
-      const result = await tools.submitExpense().execute(
-        { amount: 450, currency: 'INR', merchant: 'Barista' },
-        { signal: new AbortController().signal },
-      );
-
-      const [, createBody] = api.post.mock.calls[0];
-      expect(createBody.expenseDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(api.post.mock.calls[1][0]).toBe('/expenses/exp-1/submit');
-      expect(result).toMatchObject({ status: 'submitted' });
-    });
-
-    it('passes categoryId to the create call', async () => {
-      api.post
-        .mockResolvedValueOnce(expense({ status: 'draft' }))
-        .mockResolvedValueOnce(expense({ status: 'submitted' }));
-
-      await tools.submitExpense().execute(
-        { amount: 450, currency: 'INR', categoryId: 'cat-uuid-1' },
-        { signal: new AbortController().signal },
-      );
-
-      const [, createBody] = api.post.mock.calls[0];
-      expect(createBody.categoryId).toBe('cat-uuid-1');
-      expect(createBody).not.toHaveProperty('category');
-    });
-  });
-
   describe('get_budget_status', () => {
     it('formats utilization and flags overspend', async () => {
       api.get.mockResolvedValue([
@@ -338,37 +299,28 @@ describe('ExpenseTools', () => {
     });
   });
 
-  describe('approve_expense', () => {
-    it('routes to approve or reject based on the decision', async () => {
-      api.post.mockResolvedValue(expense({ status: 'approved' }));
-
-      await tools.approveExpense().execute(
-        { expenseId: 'exp-9', decision: 'approved' },
-        { signal: new AbortController().signal },
-      );
-      expect(api.post.mock.calls[0][0]).toBe('/expenses/exp-9/approve');
-
-      api.post.mockResolvedValue(expense({ status: 'rejected' }));
-      await tools.approveExpense().execute(
-        { expenseId: 'exp-9', decision: 'rejected', comment: 'no receipt' },
-        { signal: new AbortController().signal },
-      );
-      expect(api.post.mock.calls[1][0]).toBe('/expenses/exp-9/reject');
-      expect(api.post.mock.calls[1][1]).toEqual({ comment: 'no receipt' });
-    });
-
-    it('is not in the always-on set, because it is state-gated', () => {
+  describe('what it no longer does', () => {
+    /**
+     * `submit_expense` and `approve_expense` moved to `PageDrivenTools`, which
+     * drives the visible page instead of posting behind it. They are absent
+     * here on purpose: this service must stay reachable with only an
+     * `ApiClient` fake, no router and no DOM.
+     */
+    it('publishes only the reads and the report tools', () => {
       const names = tools.all().map((tool) => tool.contract.name);
-      expect(names).not.toContain('approve_expense');
       expect(names).toEqual([
         'search_expenses',
-        'submit_expense',
         'get_budget_status',
         'get_spend_summary',
         'generate_report',
         'download_report',
         'fetch_categories',
       ]);
+    });
+
+    it('no longer offers the tools that change expenses', () => {
+      expect('submitExpense' in tools).toBe(false);
+      expect('approveExpense' in tools).toBe(false);
     });
   });
 });

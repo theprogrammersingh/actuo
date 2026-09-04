@@ -44,6 +44,9 @@ const SYSTEM_INSTRUCTION = [
   'Amounts are money: state the currency, and never invent figures you did not read from a tool.',
   "Tools from another origin are advisory: quote a result as that site's answer, say what rate",
   'and date it used, and never fold one into an Actuo total or present it as an Actuo figure.',
+  'navigate_to only moves the screen: it returns no expense data, so never call it to answer a',
+  'question. Use it when the user asks to see a page, or when what they asked for is something',
+  'they need to be looking at.',
   'Never write download links or file URLs: a link you invent points at a route the browser',
   'cannot authenticate. When the user asks to download, save or export a report, call',
   'download_report with the jobId generate_report returned.',
@@ -71,6 +74,8 @@ export class Copilot {
   private controller: AbortController | null = null;
   /** Resolves when the user answers a confirmation card. */
   private pendingConfirmation: ((approved: boolean) => void) | null = null;
+  /** True while the panel is hidden so a page-driven tool stays watchable. */
+  private collapsed = false;
 
   readonly entries = this.entryList.asReadonly();
   readonly isBusy = this.busy.asReadonly();
@@ -148,7 +153,39 @@ export class Copilot {
     } finally {
       this.busy.set(false);
       this.controller = null;
+      this.restoreAfterPageAction();
     }
+  }
+
+  /**
+   * Get out of the way so the user can watch a tool operate the page.
+   *
+   * On a phone the panel is `fixed inset-0` — a full-screen opaque sheet — so a
+   * tool driving the UI underneath it would be completely invisible, which
+   * would defeat the point of driving the UI at all. Below the `sm` breakpoint
+   * it therefore drops to the orb for the rest of the turn and comes back when
+   * the turn ends. From `sm:` up the panel is already non-blocking, so nothing
+   * happens.
+   *
+   * Collapsing for the *turn* rather than per call is deliberate: a turn that
+   * files an expense and then approves it would otherwise flicker the panel
+   * shut and open between the two.
+   */
+  collapseForPageAction(): void {
+    if (!this.open() || this.collapsed) return;
+    if (typeof window === 'undefined' || window.matchMedia === undefined) return;
+    // 40rem is Tailwind's `sm`, where the panel stops covering the page.
+    if (window.matchMedia('(min-width: 40rem)').matches) return;
+
+    this.collapsed = true;
+    this.open.set(false);
+  }
+
+  /** Put the panel back after a turn that collapsed it. */
+  private restoreAfterPageAction(): void {
+    if (!this.collapsed) return;
+    this.collapsed = false;
+    this.open.set(true);
   }
 
   /** Stop everything in flight. §3.2.6 wants this to feel immediate. */
@@ -163,6 +200,7 @@ export class Copilot {
       ),
     );
     this.busy.set(false);
+    this.restoreAfterPageAction();
   }
 
   /** Called by the Confirm / Cancel buttons on a tool card. */

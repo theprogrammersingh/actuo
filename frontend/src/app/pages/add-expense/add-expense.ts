@@ -1,9 +1,24 @@
-import { ChangeDetectionStrategy, Component, PLATFORM_ID, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  type ElementRef,
+  PLATFORM_ID,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { CURRENCIES, type Category, type Expense } from '@actuo/shared';
+import { CURRENCIES, SUBMIT_EXPENSE, type Category, type Expense } from '@actuo/shared';
 import { ApiClient } from '../../core/api/api-client.js';
 import { Session } from '../../core/session/session.js';
 import { ToolCallAudit } from '../../webmcp/tool-call-audit.js';
+import { PageActions } from '../../webmcp/page-actions.js';
+import {
+  AGENT_FILL_STAGGER_MS,
+  agentPause,
+  setFieldValue,
+} from '../../core/agent/fill-pacing.js';
 
 /**
  * Add Expense — the DECLARATIVE WebMCP surface (PRD §7).
@@ -161,8 +176,94 @@ export class AddExpense {
   protected readonly failed = signal(false);
   protected readonly categories = signal<Category[]>([]);
 
+  private readonly pages = inject(PageActions);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly formRef = viewChild<ElementRef<HTMLFormElement>>('form');
+
+  /** Overridden to 0 in tests, which have no interest in watching it type. */
+  protected fillStaggerMs = AGENT_FILL_STAGGER_MS;
+
   constructor() {
     if (this.isBrowser) void this.loadCategories();
+
+    /*
+     * This page owns `submit_expense`. The tool navigates here and hands the
+     * work over rather than posting on its own, so the user sees the same form
+     * they would have filled themselves being filled.
+     */
+    this.destroyRef.onDestroy(
+      this.pages.provide(SUBMIT_EXPENSE.name, (args: SubmitArgs, { signal }) =>
+        this.fillAndSubmit(args, signal),
+      ),
+    );
+  }
+
+  /**
+   * Fill the visible form, then save and submit for approval.
+   *
+   * **Deliberately not `form.requestSubmit()`.** `onSubmit` writes the audit
+   * row as `actor: submitEvent.agentInvoked ? 'agent' : 'human'`, and a
+   * synthetic submit carries no `agentInvoked` — so going through it would file
+   * the agent's work as a *human* action. That flag is the only thing in the
+   * app that can produce `actor: 'human'`, and the audit viewer's human/agent
+   * contrast is built on it. `ToolRegistry.log()` already records this call as
+   * `submit_expense`, so the save path is called directly instead.
+   */
+  private async fillAndSubmit(args: SubmitArgs, signal: AbortSignal): Promise<unknown> {
+    const form = this.formRef()?.nativeElement;
+    if (!form) throw new Error('The Add expense form is not on screen.');
+
+    const expenseDate = args.expenseDate ?? this.today;
+    const values: readonly [string, string | undefined][] = [
+      ['amount', args.amount === undefined ? undefined : String(args.amount)],
+      ['currency', args.currency],
+      ['merchant', args.merchant],
+      ['categoryId', args.categoryId],
+      ['expenseDate', expenseDate],
+      ['note', args.note],
+    ];
+
+    for (const [name, value] of values) {
+      if (value === undefined || value === '') continue;
+      signal.throwIfAborted();
+      setFieldValue(form, name, value);
+      await agentPause(this.fillStaggerMs, signal);
+    }
+
+    signal.throwIfAborted();
+
+    const created = (await this.save(
+      {
+        amount: args.amount,
+        currency: args.currency,
+        categoryId: args.categoryId || null,
+        merchant: args.merchant || null,
+        note: args.note || null,
+        expenseDate,
+      },
+      form,
+    )) as { id: string };
+
+    /*
+     * `submit_expense` means create *and* send for approval — two POSTs, which
+     * is what it has always done. The form on its own only creates a draft, so
+     * the transition happens here rather than silently changing the contract.
+     */
+    const submitted = await this.api.post<Expense>(`/expenses/${created.id}/submit`, undefined);
+    this.message.set(
+      `Submitted ${submitted.currency} ${submitted.amount}` +
+        `${submitted.merchant ? ` at ${submitted.merchant}` : ''} for approval.`,
+    );
+    void this.session.refreshPendingApprovals();
+
+    return {
+      id: submitted.id,
+      amount: submitted.amount,
+      currency: submitted.currency,
+      merchant: submitted.merchant,
+      status: submitted.status,
+      date: submitted.expenseDate,
+    };
   }
 
   private async loadCategories(): Promise<void> {
@@ -264,3 +365,12 @@ export class AddExpense {
     }
   }
 }
+
+type SubmitArgs = {
+  amount: number;
+  currency: string;
+  merchant?: string;
+  categoryId?: string;
+  note?: string;
+  expenseDate?: string;
+};

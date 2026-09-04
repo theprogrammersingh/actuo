@@ -6,8 +6,6 @@ import {
   GET_BUDGET_STATUS,
   GET_SPEND_SUMMARY,
   SEARCH_EXPENSES,
-  SUBMIT_EXPENSE,
-  APPROVE_EXPENSE,
   type AnalyticsSummary,
   type BudgetStatus,
   type Category,
@@ -49,33 +47,6 @@ export class ExpenseTools {
           // and full records would burn context for no benefit.
           expenses: page.items.map(summarize),
         };
-      },
-    };
-  }
-
-  /** Mutating — the Copilot must confirm in-chat before this runs. */
-  submitExpense(): ActuoTool<{
-    amount: number;
-    currency: string;
-    merchant?: string;
-    categoryId?: string;
-    note?: string;
-    expenseDate?: string;
-  }> {
-    return {
-      contract: SUBMIT_EXPENSE,
-      execute: async (args, { signal }) => {
-        const expense = await this.api.post<Expense>(
-          '/expenses',
-          { ...args, expenseDate: args.expenseDate ?? today() },
-          signal,
-        );
-        const submitted = await this.api.post<Expense>(
-          `/expenses/${expense.id}/submit`,
-          undefined,
-          signal,
-        );
-        return summarize(submitted);
       },
     };
   }
@@ -180,30 +151,6 @@ export class ExpenseTools {
     };
   }
 
-  /**
-   * State-gated (PRD §7): the registry only publishes this when the signed-in
-   * user is an admin/owner and something is actually pending. The server still
-   * re-checks the role — the gate is UX, not security.
-   */
-  approveExpense(): ActuoTool<{
-    expenseId: string;
-    decision: 'approved' | 'rejected';
-    comment?: string;
-  }> {
-    return {
-      contract: APPROVE_EXPENSE,
-      execute: async ({ expenseId, decision, comment }, { signal }) => {
-        const path = decision === 'approved' ? 'approve' : 'reject';
-        const expense = await this.api.post<Expense>(
-          `/expenses/${expenseId}/${path}`,
-          { comment },
-          signal,
-        );
-        return summarize(expense);
-      },
-    };
-  }
-
   /** Read-only lookup for category IDs (PRD §7). */
   fetchCategories(): ActuoTool<Record<string, never>> {
     return {
@@ -226,7 +173,6 @@ export class ExpenseTools {
   all(): ActuoTool<never>[] {
     return [
       this.searchExpenses(),
-      this.submitExpense(),
       this.getBudgetStatus(),
       this.getSpendSummary(),
       this.generateReport(),
@@ -286,10 +232,6 @@ function summarize(expense: Expense) {
     status: expense.status,
     date: expense.expenseDate,
   };
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 /** A sleep that rejects promptly on abort, so cancellation feels instant. */

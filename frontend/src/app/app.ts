@@ -6,6 +6,7 @@ import {
   inject,
 } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { NAVIGATE_TO } from '@actuo/shared';
 import { CopilotPanel } from './copilot/copilot-panel.js';
 import { Session } from './core/session/session.js';
 import { ThemeService } from './core/theme/theme-service.js';
@@ -243,7 +244,15 @@ export class App {
       // An approval decision changes the queue, which closes the gate. Reads
       // cannot, and `search_expenses` runs often enough that polling on it
       // would be a request per question.
-      if (this.registry.isMutating(invocation.toolName)) {
+      //
+      // `navigate_to` is mutating by the `readOnlyHint` test — it moves the
+      // page — but it cannot touch the queue, and an agent walking the app
+      // would otherwise fire a search per hop. The network tab is part of what
+      // this app demonstrates, so the exemption is worth the named check.
+      if (
+        this.registry.isMutating(invocation.toolName) &&
+        invocation.toolName !== NAVIGATE_TO.name
+      ) {
         void this.session.refreshPendingApprovals();
       }
     });

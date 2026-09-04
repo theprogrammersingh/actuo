@@ -466,6 +466,66 @@ It is set in the runtime stage of the Dockerfile, and deliberately NOT at build
 time — a production-flagged install drops devDependencies, and the build is
 almost entirely devDependencies.
 
+## Writes go through the page, never behind it
+
+**What a human can do, the agent can do; and it does it where a human would.**
+A person cannot add an expense without going to `/add`, or change a budget
+without going to `/budgets`. Neither can an agent.
+
+Every mutating tool — `submit_expense`, `approve_expense`, `set_budget` — lives
+in `frontend/src/app/tools/page-driven-tools.ts`, which **injects no
+`ApiClient`**. Its `execute()` does three things: navigate to the page that owns
+the action, wait for that page to mount, and hand it the arguments. The page
+performs the work through the same method its own buttons call.
+
+That last part is what makes it worth the machinery. The tool gets the row
+patching, the form messages, the validation and the reloads that already exist,
+because it is running the same code. `ExpensesPage.run()` merges the decision
+into `patched` exactly as the Approve button does, so the visible row changes
+and no `Load more` page is thrown away; `BudgetsPage.commit()` is what the Save
+button calls, so the bars reload and a 403 is worded the way the form already
+words it.
+
+These tools used to POST directly, and the effect was that **nothing on screen
+moved**. `ToolRegistry.observe()` refreshes only `Session.pendingApprovals`, and
+the sole consumer of that signal is `ToolSession` gating a tool — no page reads
+it. Every page's `resource()` `params` is signal-free, so no signal change can
+re-trigger a load either. An agent approving an expense left the user looking at
+a row that still said "Submitted".
+
+Four things here are load-bearing:
+
+- **`PageActions` has no API fallback when no page answers.** A fallback would
+  restore the invisible path this exists to remove, and would do it only when
+  something went wrong — a slow chunk, a guard redirect. A timeout is an error
+  the model reports.
+- **Unregistering only clears the handler it installed.** During a route change
+  Angular builds the incoming component before destroying the outgoing one, so
+  an unconditional delete lets a page being torn down wipe the registration the
+  new page just made. Same ordering `ConverterSession` documents.
+- **The `/add` handler does not use `form.requestSubmit()`.** The form's own
+  `onSubmit` stamps the audit row `actor: agentInvoked ? 'agent' : 'human'`, and
+  a synthetic submit carries no `agentInvoked` — so it would file the agent's
+  work as a person's. That flag is the only thing in the app that can produce
+  `actor: 'human'`, and the audit viewer's contrast is built on it.
+  `ToolRegistry.log()` already records the call.
+- **The fill is paced, and the pause is not decoration.** `core/agent/fill-pacing.ts`
+  staggers fields and waits before saving. Filling and submitting in one frame
+  leaves no frame in which the filled form is on screen — indistinguishable from
+  the invisible POST it replaced. Specs drive the stagger at 0.
+
+The Copilot collapses to the orb below the `sm` breakpoint before a page-driven
+tool runs (`Copilot.collapseForPageAction()`), because the panel is
+`fixed inset-0` there — a full-screen sheet the driven page would be hidden
+behind. It collapses for the *turn*, not per call, so a turn that files an
+expense and then approves it does not flicker. From `sm:` up the panel is
+already non-blocking and nothing happens.
+
+`submit_expense` still means create **and** submit for approval, as it always
+has. The declarative `add_expense_form` creates a draft only, so the `/add`
+handler performs the transition after the save rather than quietly narrowing the
+contract.
+
 ## The expense workflow is one table, shared
 
 Which action is legal, who may perform it, and on whose row — all of it lives in
@@ -523,7 +583,11 @@ request; the access token deliberately carries no role claim.
   `App` subscribes once and fans out to the audit write and the
   pending-approval re-poll. Keep HTTP and session dependencies out of the
   registry itself — that is what keeps its spec free of fakes.
-- `tools/` — the five tool `execute()` implementations over `/api/*`.
+- `tools/` — the tool `execute()` implementations, split by what they touch so
+  each spec needs only its own fakes. `expense-tools.ts` is the six reads over
+  `/api/*`; `navigation-tools.ts` is `navigate_to`, which touches the `Router`
+  and nothing else; `page-driven-tools.ts` is every write, and touches **no
+  `ApiClient` at all** — see "Writes go through the page" below.
 - `copilot/` — `Copilot` (the agent loop) and `CopilotPanel` (orb + panel).
 - `core/api/` — `ApiClient`. `core/theme/` — `ThemeService`.
 - `pages/add-expense/` — the declarative WebMCP form. It is the only tool call a
@@ -634,8 +698,12 @@ rows were, at hand-written rates nobody published. It lives under `backend/`
 because pnpm hoists nothing: a root script cannot resolve `@nestjs/core`.
 
 **The embedded converter does not change this, and must not.** `converter/`
-frames a separate converter app on four surfaces (`/convert`, `/agent`, the
-dashboard's excluded-rows notice, and expense rows in another currency). It is
+frames a separate converter app on four surfaces (`/convert`, `/agent`, a card
+on the dashboard, and expense rows in another currency). The dashboard's and
+`/convert`'s open on arrival; the other two are triggers. Opening on the
+dashboard is deliberate — a cross-origin tool lives only as long as the document
+that registered it, so a collapsed frame on the screen people land on means the
+Copilot cannot convert until someone clicks. It is
 advisory: a rate a person reads off another site *today* is not the historical
 rate locked at entry, so nothing it shows may reach `converted_amount`,
 `sumSpend()`, `sumByCategory()`, or the `excludedNotice()` copy. The FX pass
@@ -669,7 +737,17 @@ These are the load-bearing constraints — most bugs worth preventing here are v
 PRD §7 is a checklist every row of which needs a concrete implementation. When adding a tool, know which aspect it demonstrates:
 
 - **Declarative** — the Add Expense quick-entry form is annotated HTML with *no* JS tool registration. Keep it plain.
-- **Imperative** (`registerTool`) — `submit_expense`, `search_expenses`, `get_budget_status`, `approve_expense`, `generate_report`
+- **Imperative** (`registerTool`) — `submit_expense`, `search_expenses`, `get_budget_status`, `approve_expense`, `set_budget`, `generate_report`
+- **Navigation** — `navigate_to` moves the browser between the app's authenticated
+  pages. It exists for agents driving Actuo from outside, which otherwise have to
+  read the DOM and guess where to click, and its enum descriptions double as the
+  map of the app an agent reads straight off `getTools()`. The destination table
+  is `APP_DESTINATIONS` in `shared/src/tools.ts`, pinned against the real router
+  config in both directions by `tools/navigate-destinations-contract.spec.ts` —
+  every `authGuard` route is a destination and every destination is one, so a new
+  gated page cannot ship undescribed. It is **not** `readOnlyHint` (it moves the
+  page), which is why `app.ts` exempts it by name from the pending-approval
+  re-poll that every other mutating tool triggers.
 - **State-gated** — `approve_expense` registers only when the user is `admin`/`owner` AND a pending item exists; emits `toolchange`
 - **Cancellation** — `generate_report` honors `AbortSignal`; the UI must react within ~100ms
 - **Cross-origin** — the Copilot must work embedded on an unrelated demo page (iframe + `exposedTo`/`fromOrigins`/`allow="tools"`) with no code changes
