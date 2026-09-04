@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import {
+  DOWNLOAD_REPORT,
   FETCH_CATEGORIES,
   GENERATE_REPORT,
   GET_BUDGET_STATUS,
@@ -14,6 +15,7 @@ import {
   type ExpensePage,
 } from '@actuo/shared';
 import { ApiClient } from '../core/api/api-client.js';
+import { ReportDownload } from '../core/reports/report-download.js';
 import type { ActuoTool } from '../webmcp/tool-registry.js';
 
 /**
@@ -27,6 +29,7 @@ import type { ActuoTool } from '../webmcp/tool-registry.js';
 @Injectable({ providedIn: 'root' })
 export class ExpenseTools {
   private readonly api = inject(ApiClient);
+  private readonly downloads = inject(ReportDownload);
 
   /** Read-only, so it carries `readOnlyHint` and needs no confirmation. */
   searchExpenses(): ActuoTool<{
@@ -155,6 +158,29 @@ export class ExpenseTools {
   }
 
   /**
+   * Save a finished report to the user's device.
+   *
+   * The counterpart to the Download button on the tool call card, and the only
+   * route a file has to disk for a client that can only call tools: `execute()`
+   * runs in the page's authenticated session, so the page performs the fetch
+   * and the browser save on the agent's behalf.
+   *
+   * Failures propagate on purpose. `Copilot.runTool` turns a throw into an
+   * error card and hands the message back to the model, so an expired job
+   * becomes "that report is gone, want me to regenerate it?" rather than a
+   * cheerful report of a save that never happened.
+   */
+  downloadReport(): ActuoTool<{ jobId: string }> {
+    return {
+      contract: DOWNLOAD_REPORT,
+      execute: async ({ jobId }) => {
+        const { filename } = await this.downloads.save(jobId);
+        return { jobId, filename };
+      },
+    };
+  }
+
+  /**
    * State-gated (PRD §7): the registry only publishes this when the signed-in
    * user is an admin/owner and something is actually pending. The server still
    * re-checks the role — the gate is UX, not security.
@@ -204,6 +230,7 @@ export class ExpenseTools {
       this.getBudgetStatus(),
       this.getSpendSummary(),
       this.generateReport(),
+      this.downloadReport(),
       this.fetchCategories(),
     ] as unknown as ActuoTool<never>[];
   }
@@ -214,13 +241,32 @@ export class ExpenseTools {
     while (Date.now() < deadline) {
       signal.throwIfAborted();
 
-      const job = await this.api.get<{ status: string; url?: string; rows?: number }>(
-        `/reports/${jobId}`,
-        undefined,
-        signal,
-      );
+      const job = await this.api.get<{
+        status: string;
+        rows?: number;
+        filename?: string;
+        preview?: string;
+        previewTruncated?: boolean;
+      }>(`/reports/${jobId}`, undefined, signal);
 
-      if (job.status === 'ready') return { url: job.url, rows: job.rows };
+      /*
+       * The status response also carries a `url`, and it is deliberately not
+       * forwarded. It points at an authenticated route, so a model handed a
+       * field called `url` writes a link into chat that 401s the moment anyone
+       * clicks it — there is no bearer header on a browser navigation. The user
+       * gets the file from the Download button on the tool call card
+       * (`ReportDownload`); an agent with no UI gets `preview` instead of a URL
+       * it could not authenticate either.
+       */
+      if (job.status === 'ready') {
+        return {
+          jobId,
+          rows: job.rows,
+          filename: job.filename,
+          preview: job.preview,
+          previewTruncated: job.previewTruncated,
+        };
+      }
       if (job.status === 'failed') throw new Error('Report generation failed.');
 
       await delay(500, signal);

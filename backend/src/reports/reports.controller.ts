@@ -1,15 +1,28 @@
-import { Body, Controller, Get, Header, NotFoundException, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  NotFoundException,
+  Param,
+  Post,
+  Res,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { GenerateReportDto } from './dto/report.dto.js';
-import { ReportsService, type ReportStatus } from './reports.service.js';
+import { ReportsService, type ReportJob, type ReportStatus } from './reports.service.js';
 
 interface ReportView {
   jobId: string;
   status: ReportStatus;
   rows?: number;
   url?: string;
+  filename?: string;
+  preview?: string;
+  previewTruncated?: boolean;
   error?: string;
 }
 
@@ -39,24 +52,39 @@ export class ReportsController {
     return view(this.reports.cancel(user, id));
   }
 
+  /**
+   * Authenticated like every other route: the caller sends a bearer header, so
+   * this is reached by `ApiClient.download()`, never by navigating the browser
+   * to the URL. Content-Disposition is set here rather than with `@Header`
+   * because the filename carries the job's own date range.
+   */
   @Roles('owner', 'admin', 'member')
   @Get(':id/download')
   @Header('Content-Type', 'text/csv; charset=utf-8')
-  download(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): string {
+  download(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+  ): string {
     const job = this.reports.get(user, id);
     if (job.status !== 'ready' || job.content === undefined) {
       throw new NotFoundException('Report is not ready');
     }
+    const filename = job.filename ?? `actuo-report-${job.id}.csv`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return job.content;
   }
 }
 
-function view(job: {
-  id: string;
-  status: ReportStatus;
-  rows?: number;
-  url?: string;
-  error?: string;
-}): ReportView {
-  return { jobId: job.id, status: job.status, rows: job.rows, url: job.url, error: job.error };
+function view(job: ReportJob): ReportView {
+  return {
+    jobId: job.id,
+    status: job.status,
+    rows: job.rows,
+    url: job.url,
+    filename: job.filename,
+    preview: job.preview,
+    previewTruncated: job.previewTruncated,
+    error: job.error,
+  };
 }

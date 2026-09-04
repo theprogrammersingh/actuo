@@ -9,8 +9,9 @@ import {
   viewChild,
 } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { ReportDownload } from '../core/reports/report-download';
 import { ToolCallCard } from '../ui/tool-call-card';
-import { Copilot } from './copilot';
+import { Copilot, type CopilotEntry } from './copilot';
 
 /**
  * The Copilot: an idle aurora orb that opens into a conversation.
@@ -153,8 +154,12 @@ import { Copilot } from './copilot';
                   [mutates]="entry.mutates"
                   [untrusted]="entry.untrusted"
                   [cancellable]="entry.cancellable"
+                  [downloadLabel]="downloadLabel(entry)"
+                  [downloading]="downloads.isPending(reportJobId(entry))"
+                  [downloadError]="downloads.errorFor(reportJobId(entry))"
                   (confirm)="copilot.respondToConfirmation(true)"
                   (cancel)="onCancel(entry.state)"
+                  (download)="onDownload(entry)"
                 />
               }
             }
@@ -185,6 +190,7 @@ import { Copilot } from './copilot';
 })
 export class CopilotPanel {
   protected readonly copilot = inject(Copilot);
+  protected readonly downloads = inject(ReportDownload);
   protected readonly draft = signal('');
   private readonly scroller = viewChild<ElementRef<HTMLElement>>('scroller');
 
@@ -215,6 +221,34 @@ export class CopilotPanel {
   }
 
   /**
+   * Which completed tool call produced a file the user can keep.
+   *
+   * Report-specific knowledge sits in the Copilot's view rather than in
+   * `ToolCallCard`, which is the shared UI layer, or in `Copilot`, whose spec
+   * would then need an `ApiClient` fake. `copilot.ts` already names
+   * `generate_report` for `cancellable`, so this is the established seam.
+   */
+  protected downloadLabel(entry: ToolEntry): string | undefined {
+    const jobId = this.reportJobId(entry);
+    if (!jobId) return undefined;
+    const rows = (entry.result as { rows?: number }).rows;
+    return rows === undefined ? 'Download CSV' : `Download CSV (${rows} rows)`;
+  }
+
+  protected reportJobId(entry: ToolEntry): string | undefined {
+    if (entry.name !== 'generate_report' || entry.state !== 'done') return undefined;
+    const result = entry.result;
+    if (!result || typeof result !== 'object') return undefined;
+    const { jobId } = result as { jobId?: unknown };
+    return typeof jobId === 'string' && jobId ? jobId : undefined;
+  }
+
+  protected onDownload(entry: ToolEntry): void {
+    const jobId = this.reportJobId(entry);
+    if (jobId) void this.downloads.download(jobId);
+  }
+
+  /**
    * Cancel means two different things on a card: decline a proposed action, or
    * stop work already running. Both are the same button to the user.
    */
@@ -223,3 +257,5 @@ export class CopilotPanel {
     else this.copilot.stop();
   }
 }
+
+type ToolEntry = Extract<CopilotEntry, { kind: 'tool' }>;

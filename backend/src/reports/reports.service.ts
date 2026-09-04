@@ -15,6 +15,11 @@ export interface ReportJob {
   rows?: number;
   url?: string;
   content?: string;
+  /** What the browser should save the file as; reaches Content-Disposition. */
+  filename?: string;
+  /** Header plus the first PREVIEW_ROWS rows — see the note on `url` below. */
+  preview?: string;
+  previewTruncated?: boolean;
   error?: string;
   createdAt: number;
 }
@@ -119,9 +124,23 @@ export class ReportsService {
 
       if (this.jobs.get(job.id)?.status === 'cancelled') return;
 
+      /*
+       * These five move together, the way the FX lock's three do: a download
+       * URL with no filename, or a preview with no row count, describes a file
+       * that cannot be defended.
+       *
+       * `url` is the correct self-describing path for this resource and stays.
+       * It is NOT what the `generate_report` tool hands the model — that route
+       * needs a bearer header, so a link to it in chat 401s the moment anyone
+       * clicks it. `preview` exists so an agent with no UI still gets data
+       * rather than a URL it cannot authenticate. See expense-tools.ts.
+       */
       job.content = lines.join('\n');
       job.rows = items.length;
       job.url = `/api/reports/${job.id}/download`;
+      job.filename = reportFilename(dto.from, dto.to);
+      job.preview = lines.slice(0, PREVIEW_ROWS + 1).join('\n');
+      job.previewTruncated = items.length > PREVIEW_ROWS;
       job.status = 'ready';
     } catch (error) {
       // A cancel mid-fetch is a normal outcome, not a failure.
@@ -136,6 +155,20 @@ export class ReportsService {
 class ReportCancelled extends Error {}
 
 const CSV_HEADER = 'date,merchant,amount,currency,status';
+
+/** How many data rows the tool result carries, so a headless agent gets data
+ * without the whole file landing in a model's context on every later turn. */
+const PREVIEW_ROWS = 20;
+
+/**
+ * The DTO already validates both dates as ISO8601, but this value is
+ * interpolated into a Content-Disposition header, so it is filtered here rather
+ * than trusted two layers away from the validator.
+ */
+function reportFilename(from: string, to: string): string {
+  const safe = (value: string) => value.replace(/[^\w.-]/g, '');
+  return `actuo-expenses-${safe(from)}_${safe(to)}.csv`;
+}
 
 function toCsvRow(expense: Expense): string {
   return [

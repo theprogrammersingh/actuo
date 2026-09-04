@@ -157,6 +157,31 @@ export type ToolCallState = 'running' | 'awaiting-confirmation' | 'done' | 'erro
       }
 
       <!--
+        A tool that produced a file needs a real control, not a URL in the
+        result: the file sits behind an authenticated route, so a link to it
+        cannot work. Generic on purpose — the card does not know what a report
+        is; the caller supplies the label and handles the click.
+      -->
+      @if (state() === 'done' && downloadLabel(); as label) {
+        <div class="border-t border-line px-3 py-2.5">
+          <button
+            type="button"
+            class="min-h-11 w-full rounded-md border border-line px-3 text-sm font-medium text-body disabled:opacity-50"
+            [disabled]="downloading()"
+            (click)="download.emit()"
+          >
+            <span aria-hidden="true">⬇</span>
+            {{ downloading() ? 'Downloading…' : label }}
+          </button>
+          <!-- Visible copy, not colour alone (WCAG 1.4.1) — and jobs live in
+               server memory, so a restart makes this a genuine outcome. -->
+          @if (downloadError(); as message) {
+            <p class="mt-1.5 text-xs text-status-danger">{{ message }}</p>
+          }
+        </div>
+      }
+
+      <!--
         §3.2.6: a cancellable call shows a real Stop. The UI must visibly react
         within ~100ms, so the button emits immediately and the caller aborts.
       -->
@@ -192,9 +217,14 @@ export class ToolCallCard {
   readonly untrusted = input(false, { transform: booleanAttribute });
   readonly cancellable = input(false, { transform: booleanAttribute });
   readonly startExpanded = input(false, { transform: booleanAttribute });
+  /** Set to offer a download for a completed call; also the button's label. */
+  readonly downloadLabel = input<string>();
+  readonly downloading = input(false, { transform: booleanAttribute });
+  readonly downloadError = input<string>();
 
   readonly confirm = output<void>();
   readonly cancel = output<void>();
+  readonly download = output<void>();
 
   private readonly manuallyExpanded = signal<boolean | null>(null);
 

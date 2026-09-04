@@ -284,6 +284,7 @@ describe('toGeminiSchema', () => {
         'get_budget_status',
         'get_spend_summary',
         'generate_report',
+        'download_report',
         'fetch_categories',
         'approve_expense',
       ]);

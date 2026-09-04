@@ -44,6 +44,9 @@ const SYSTEM_INSTRUCTION = [
   'Amounts are money: state the currency, and never invent figures you did not read from a tool.',
   "Tools from another origin are advisory: quote a result as that site's answer, say what rate",
   'and date it used, and never fold one into an Actuo total or present it as an Actuo figure.',
+  'Never write download links or file URLs: a link you invent points at a route the browser',
+  'cannot authenticate. When the user asks to download, save or export a report, call',
+  'download_report with the jobId generate_report returned.',
   "Today's date is " + new Date().toISOString().slice(0, 10) + '.',
 ].join(' ');
 

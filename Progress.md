@@ -195,7 +195,7 @@ day's rate; a row on a weekend names the preceding working day.
 | Spend by category | 1 | ✅ | `GET /api/analytics/summary` returns `byCategory` with per-category spend and share. Also `get_spend_summary` WebMCP tool |
 | Month-over-month deltas | 1 | ✅ | `monthOverMonthDelta` in `AnalyticsSummary`, percentage change vs prior month (null when no prior data). Exposed in `get_spend_summary` tool output |
 | Team vs individual | 2 | ⬜ | — |
-| CSV export | 0 | ✅ | Chunked, cancellable, complete across pages |
+| CSV export | 0 | ✅ | Chunked, cancellable, complete across pages. The file is fetched with the session bearer and saved via `saveBlob` (`core/reports/report-download.ts`) — `generate_report` returns a job id and a bounded preview, never the download URL, which is an authenticated route no chat link can reach. Two ways to get the file: the Download button on the tool call card, and the `download_report` tool for agents |
 | **PDF export** | 2 | ⬜ | `pdf` is now **rejected** rather than silently answered with CSV. `shared/src/report-format-contract.spec.ts` pins the tool schema and the backend DTO to the same list |
 | `/api/analytics/*` | 1 | ✅ | `backend/src/analytics/` module with `GET /api/analytics/summary`. Returns current/prior month totals, MoM delta, per-category breakdown, excluded counts. 7 unit tests |
 
@@ -235,17 +235,25 @@ Cross-origin is live as of 2026-08-29; only the standalone-script packaging (Pha
 | Aspect | Status | Notes |
 |---|---|---|
 | Declarative API (annotated form) | ✅ | Add Expense: `toolname`/`tooldescription`/`toolparamdescription`/`toolautosubmit`, `agentInvoked` + `respondWith`, **no JS registration** |
-| Imperative `registerTool` | ✅ | Five tools, per-tool `AbortController` lifetime |
+| Imperative `registerTool` | ✅ | Six tools, per-tool `AbortController` lifetime |
 | JSON Schema inputs | ✅ | One definition in `shared/src/tools.ts`, used by client and server |
 | **Dynamic / state-gated tools** | ✅ | The shell polls on sign-in and after every mutating call. Verified live: `approve_expense` present in `getTools()` as owner with 3 pending, absent as member, and every tool retired on sign-out |
 | Cancellation (`AbortSignal`) | ✅ | Client aborts, polls stop, server abandons the job mid-fetch and mid-format |
 | Cross-origin tools | ✅ | See §6.8. Needs a genuinely second origin — same-origin descriptors are filtered out, which is what made the earlier in-repo page unprovable. It is now a separately built, independently deployed app Actuo does not own, and it is proven from the deploy itself, not only from localhost |
-| Security annotations | ✅ | `readOnlyHint` on all five, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the converter's tools, whose results carry third-party rate data; shown as a badge on the tool-call card |
+| Security annotations | ✅ | `readOnlyHint` on the reads, driving the shell's re-poll and the `/agent` panel. `untrustedContentHint` on `search_expenses` and `approve_expense` — the two that surface *another person's* free text — and on the converter's tools, whose results carry third-party rate data; shown as a badge on the tool-call card |
 | `getTools()` discovery | ✅ | Drives the cross-origin path and the `/agent` panel; re-runs on `toolchange`. The Copilot still reads its own registry for local tools, deliberately — see "the tool registry decision" |
 | `executeTool()` + manual debug panel | 🟡 | `executeTool()` done, and `/agent` renders `Copilot.crossOriginTools` and the registry's `invocationLog()`. Still read-only: there is no form to invoke a tool by hand with arbitrary arguments |
 
 > Open question: `generate_report` is annotated `readOnlyHint: true` but creates a
 > server-side job. Defensible, but decide it deliberately.
+
+`download_report` is the companion tool that saves a finished report to disk. It
+exists because a file has no other route out for a client that can only call
+tools: the download route needs the session bearer header, so no URL — in chat or
+handed to an agent — can fetch it. A tool's `execute()` runs *inside the page*, in
+the authenticated session, so the page does the fetch and the browser save on the
+agent's behalf. `readOnlyHint: false` (a file lands on the user's machine) with no
+confirmation (asking to download is the confirmation).
 
 ## §8.4 PWA — ✅
 
